@@ -1,0 +1,11 @@
+[package]
+name = "partial-json-parser-rs"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+name = "partial_json_parser_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.20.0"
