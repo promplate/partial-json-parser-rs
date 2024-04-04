@@ -1,3 +1,5 @@
+mod partical_parser;
+
 use pyo3::prelude::*;
 
 #[pyfunction]
