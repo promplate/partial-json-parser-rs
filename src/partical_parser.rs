@@ -9,13 +9,14 @@ use nom::{IResult, Offset};
 
 use crate::debug_println;
 
-#[derive(Debug, PartialEq)]
-pub enum JsonValue<'a> {
-    Str(&'a str),
-    Boolean(bool),
-    Num(f64),
-    Array(Vec<JsonValue<'a>>),
-    Object(HashMap<&'a str, JsonValue<'a>>),
+#[derive(Debug, PartialEq, Eq, Default)]
+pub enum JsonType {
+    #[default]
+    Str,
+    Boolean,
+    Num,
+    Array,
+    Object,
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -23,17 +24,18 @@ enum ErrType {
     #[default]
     Failure,
     Completion {
+        json_type: JsonType,
         completion: String,
         last_completion: String,
     },
 }
 
 trait ErrCast<'a> {
-    fn cast(self, cur_str: &'a str, last_completion: String) -> Self;
+    fn cast(self, cur_str: &'a str, last_completion: String, json_type: JsonType) -> Self;
 }
 
-impl <'a> ErrCast<'a> for IResult<&str, &str, ErrRes<'a, &str>> {
-    fn cast(mut self, cur_str: &'a str, last_completion: String) -> Self {
+impl<'a> ErrCast<'a> for IResult<&str, &str, ErrRes<'a, &str>> {
+    fn cast(mut self, cur_str: &'a str, last_completion: String, json_type: JsonType) -> Self {
         if let Err(ref mut err) = self {
             match err {
                 nom::Err::Error(err) | nom::Err::Failure(err) => {
@@ -44,6 +46,7 @@ impl <'a> ErrCast<'a> for IResult<&str, &str, ErrRes<'a, &str>> {
                         err.err_type = if rem.0.is_empty() {
                             ErrType::Completion {
                                 completion: String::default(),
+                                json_type,
                                 // 所有的completion都在返回上一级后提交（可能会丢弃）
                                 last_completion,
                             }
@@ -103,7 +106,9 @@ pub fn is_string_character(c: char) -> bool {
     c != '"' && c != '\\'
 }
 
-fn parse_string(i: &str) -> IResult<&str, &str, ErrRes<&str>> {
+type ParseRes<'a> = IResult<&'a str, &'a str, ErrRes<'a, &'a str>>;
+
+fn parse_string(i: &str) -> ParseRes {
     let res: Result<(&str, &str), nom::Err<ErrRes<&str>>> = preceded(
         char('\"'),
         terminated(
@@ -111,15 +116,17 @@ fn parse_string(i: &str) -> IResult<&str, &str, ErrRes<&str>> {
             char('\"'),
         ),
     )(i);
-    res.cast(i, String::from("\""))
+    res.cast(i, String::from("\""), JsonType::Str)
 }
 
+fn parse_boolean(i: &str) -> ParseRes {
+    todo!()
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::debug_println;
-
 
     #[test]
     fn test_string_complete_without_escaped() {
@@ -148,8 +155,8 @@ mod tests {
             Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
                 assert_eq!(ErrType::Failure, err.err_type);
                 assert_eq!(Some(input), err.err_str);
-            },
-            _ => panic!("Output is ok or completion!")
+            }
+            _ => panic!("Output is ok or completion!"),
         }
     }
 
@@ -159,10 +166,17 @@ mod tests {
         let output = parse_string(input);
         match output {
             Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
-                assert_eq!(ErrType::Completion { completion: String::default(), last_completion: r#"""#.to_string() }, err.err_type);
+                assert_eq!(
+                    ErrType::Completion {
+                        completion: String::default(),
+                        last_completion: r#"""#.to_string(),
+                        json_type: JsonType::Str
+                    },
+                    err.err_type
+                );
                 assert_eq!(Some(input), err.err_str);
-            },
-            _ => panic!("Output is ok or completion!")
+            }
+            _ => panic!("Output is ok or completion!"),
         }
     }
 }
