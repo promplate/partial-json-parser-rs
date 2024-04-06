@@ -24,34 +24,35 @@ enum ErrType {
     Failure,
     Completion {
         completion: String,
-        last_completion: Option<String>,
+        last_completion: String,
     },
 }
 
-trait ErrCast {
-    fn cast(self, father_str: &str) -> Self;
+trait ErrCast<'a> {
+    fn cast(self, cur_str: &'a str, last_completion: String) -> Self;
 }
 
-impl ErrCast for IResult<&str, &str, ErrRes<&str>> {
-    fn cast(mut self, father_str: &str) -> Self {
+impl <'a> ErrCast<'a> for IResult<&str, &str, ErrRes<'a, &str>> {
+    fn cast(mut self, cur_str: &'a str, last_completion: String) -> Self {
         if let Err(ref mut err) = self {
             match err {
                 nom::Err::Error(err) | nom::Err::Failure(err) => {
-                    let (rem, _) = err.base_err.errors.split_first().unwrap();
-                    let err_idx = father_str.offset(rem.0);
-                    debug_println!("rem: {}", rem.0);
-                    let completion = String::from("\"");
-                    err.err_type = if rem.0.is_empty() {
-                        ErrType::Completion {
-                            completion: String::default(),
-                            last_completion: Some(completion),
-                        }
-                    } else {
-                        ErrType::Failure
-                    };
-                    
-                    err.ex_idx = 0;
-                    err.idx = err_idx;
+                    if err.err_str.is_none() {
+                        // 如果是第一次发生错误，需要将err_str记录下来
+                        let (rem, _) = err.base_err.errors.split_first().unwrap();
+                        debug_println!("rem: {}", rem.0);
+                        err.err_type = if rem.0.is_empty() {
+                            ErrType::Completion {
+                                completion: String::default(),
+                                // 所有的completion都在返回上一级后提交（可能会丢弃）
+                                last_completion,
+                            }
+                        } else {
+                            ErrType::Failure
+                        };
+                        err.err_str = Some(cur_str)
+                    }
+                    // 不是第一次发生错误，不做处理直接将错误向后传递即可
                 }
                 _ => panic!("should not reach here"),
             }
@@ -61,26 +62,24 @@ impl ErrCast for IResult<&str, &str, ErrRes<&str>> {
 }
 
 #[derive(Debug, PartialEq)]
-struct ErrRes<I> {
+struct ErrRes<'a, I> {
     pub base_err: VerboseError<I>,
     pub err_type: ErrType,
-    pub idx: usize,
-    pub ex_idx: usize,
+    pub err_str: Option<&'a str>,
 }
 
-impl<I> ErrRes<I> {
+impl<'a, I> ErrRes<'a, I> {
     // 对于不同的类型，需要不同的completion设置，所以
     fn simple_cast(base_err: VerboseError<I>) -> Self {
         Self {
             base_err,
             err_type: ErrType::default(),
-            idx: usize::default(),
-            ex_idx: usize::default(),
+            err_str: None,
         }
     }
 }
 
-impl<I> ParseError<I> for ErrRes<I> {
+impl<'a, I> ParseError<I> for ErrRes<'a, I> {
     fn from_error_kind(input: I, kind: nom::error::ErrorKind) -> Self {
         ErrRes::simple_cast(VerboseError::from_error_kind(input, kind))
     }
@@ -112,7 +111,7 @@ fn parse_string(i: &str) -> IResult<&str, &str, ErrRes<&str>> {
             char('\"'),
         ),
     )(i);
-    res.cast(i)
+    res.cast(i, String::from("\""))
 }
 
 
@@ -148,8 +147,20 @@ mod tests {
         match output {
             Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
                 assert_eq!(ErrType::Failure, err.err_type);
-                assert_eq!(8, err.idx);
-                assert_eq!(0, err.ex_idx);
+                assert_eq!(Some(input), err.err_str);
+            },
+            _ => panic!("Output is ok or completion!")
+        }
+    }
+
+    #[test]
+    fn test_string_incomplete() {
+        let input = r#""laljfw\""#;
+        let output = parse_string(input);
+        match output {
+            Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
+                assert_eq!(ErrType::Completion { completion: String::default(), last_completion: r#"""#.to_string() }, err.err_type);
+                assert_eq!(Some(input), err.err_str);
             },
             _ => panic!("Output is ok or completion!")
         }
