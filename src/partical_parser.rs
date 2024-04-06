@@ -15,6 +15,7 @@ pub enum JsonType {
     Str,
     Boolean,
     Num,
+    KeyVal,
     Array,
     Object,
 }
@@ -30,11 +31,13 @@ enum ErrType {
     },
 }
 
+type ParseRes<'a, O> = IResult<&'a str, O, ErrRes<'a, &'a str>>;
+
 trait ErrCast<'a> {
     fn cast(self, cur_str: &'a str, last_completion: String, json_type: JsonType) -> Self;
 }
 
-impl<'a> ErrCast<'a> for IResult<&str, &str, ErrRes<'a, &str>> {
+impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
     fn cast(mut self, cur_str: &'a str, last_completion: String, json_type: JsonType) -> Self {
         if let Err(ref mut err) = self {
             match err {
@@ -97,7 +100,7 @@ fn is_space(c: char) -> bool {
     c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
-fn sp(i: &str) -> IResult<&str, &str> {
+fn sp(i: &str) -> ParseRes<&str> {
     take_while(is_space)(i)
 }
 
@@ -106,9 +109,7 @@ pub fn is_string_character(c: char) -> bool {
     c != '"' && c != '\\'
 }
 
-type ParseRes<'a> = IResult<&'a str, &'a str, ErrRes<'a, &'a str>>;
-
-fn parse_string(i: &str) -> ParseRes {
+fn parse_string(i: &str) -> ParseRes<&str> {
     let res: Result<(&str, &str), nom::Err<ErrRes<&str>>> = preceded(
         char('\"'),
         terminated(
@@ -119,7 +120,22 @@ fn parse_string(i: &str) -> ParseRes {
     res.cast(i, String::from("\""), JsonType::Str)
 }
 
-fn parse_boolean(i: &str) -> ParseRes {
+fn tryd(i: &str) -> ParseRes<&str> {
+    let res = terminated(parse_string, char('\"'))(i);
+    res.cast(i, String::from("ds"), JsonType::Str)
+}
+
+fn parse_key_value(i: &str) -> ParseRes<(&str, &str)> {
+    // 临时用parse_string顶替一下，测试
+    let res: ParseRes<(&str, &str)> = separated_pair(
+        preceded(sp, parse_string),
+        cut(preceded(sp, char(':'))),
+        parse_string,
+    )(i);
+    res.cast(i, "".to_string(), JsonType::KeyVal)
+}
+
+fn parse_boolean(i: &str) -> ParseRes<&str> {
     todo!()
 }
 
@@ -178,5 +194,39 @@ mod tests {
             }
             _ => panic!("Output is ok or completion!"),
         }
+    }
+
+    macro_rules! quick_test_failed {
+        ($input: expr, $func: ident, $($eq_left: expr => $field: ident), +) => {{
+            let output = $func($input);
+            match output {
+                Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
+                    $(
+                        assert_eq!($eq_left, err.$field);
+                    )+
+                }
+                _ => panic!("Output is ok or completion!"),
+            }
+        }}; 
+    }
+
+    #[test]
+    fn test_keyval_incomplete() {
+        quick_test_failed!(r#""laljfw""#, parse_key_value, 
+            ErrType::Completion {
+                completion: String::default(),
+                last_completion: r#""#.to_string(),
+                json_type: JsonType::KeyVal
+            } => err_type,
+            Some(r#""laljfw""#) => err_str
+        )
+    }
+
+    #[test]
+    fn test_keyval_invalid() {
+        quick_test_failed!(r#""laljfw" ("#, parse_key_value, 
+            ErrType::Failure => err_type,
+            Some(r#""laljfw" ("#) => err_str
+        )
     }
 }
