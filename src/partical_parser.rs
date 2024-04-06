@@ -28,6 +28,38 @@ enum ErrType {
     },
 }
 
+trait ErrCast {
+    fn cast(self, father_str: &str) -> Self;
+}
+
+impl ErrCast for IResult<&str, &str, ErrRes<&str>> {
+    fn cast(mut self, father_str: &str) -> Self {
+        if let Err(ref mut err) = self {
+            match err {
+                nom::Err::Error(err) | nom::Err::Failure(err) => {
+                    let (rem, _) = err.base_err.errors.split_first().unwrap();
+                    let err_idx = father_str.offset(rem.0);
+                    debug_println!("rem: {}", rem.0);
+                    let completion = String::from("\"");
+                    err.err_type = if rem.0.is_empty() {
+                        ErrType::Completion {
+                            completion: String::default(),
+                            last_completion: Some(completion),
+                        }
+                    } else {
+                        ErrType::Failure
+                    };
+                    
+                    err.ex_idx = 0;
+                    err.idx = err_idx;
+                }
+                _ => panic!("should not reach here"),
+            }
+        }
+        self
+    }
+}
+
 #[derive(Debug, PartialEq)]
 struct ErrRes<I> {
     pub base_err: VerboseError<I>,
@@ -73,36 +105,14 @@ pub fn is_string_character(c: char) -> bool {
 }
 
 fn parse_string(i: &str) -> IResult<&str, &str, ErrRes<&str>> {
-    let mut res: Result<(&str, &str), nom::Err<ErrRes<&str>>> = preceded(
+    let res: Result<(&str, &str), nom::Err<ErrRes<&str>>> = preceded(
         char('\"'),
         terminated(
             escaped(take_while1(is_string_character), '\\', one_of("\"bfnrt\\")),
             char('\"'),
         ),
     )(i);
-    if let Err(ref mut err) = res {
-        match err {
-            nom::Err::Error(err) | nom::Err::Failure(err) => {
-                let (rem, _) = err.base_err.errors.split_first().unwrap();
-                let err_idx = i.offset(rem.0);
-                debug_println!("rem: {}", rem.0);
-                let completion = String::from("\"");
-                err.err_type = if rem.0.is_empty() {
-                    ErrType::Completion {
-                        completion: String::default(),
-                        last_completion: Some(completion),
-                    }
-                } else {
-                    ErrType::Failure
-                };
-                
-                err.ex_idx = 0;
-                err.idx = err_idx;
-            }
-            _ => panic!("should not reach here"),
-        }
-    }
-    res
+    res.cast(i)
 }
 
 
