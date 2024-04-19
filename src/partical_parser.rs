@@ -41,7 +41,7 @@ trait ErrCast<'a> {
         json_type: JsonType,
         delete: bool,
     ) -> Self;
-    fn func_cast<F>(self, func: F) -> Self
+    fn func_cast<F>(self, func: F, cur_completion: &str, delete: bool) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>);
     fn is_invalid(&self) -> bool;
@@ -50,50 +50,35 @@ trait ErrCast<'a> {
 
 impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
     fn cast(
-        mut self,
+        self,
         cur_str: &'a str,
         cur_completion: &str,
         json_type: JsonType,
         delete: bool,
     ) -> Self {
-        if let Err(ref mut err) = self {
-            match err {
-                nom::Err::Error(err) | nom::Err::Failure(err) => {
-                    if err.err_str.is_none() {
-                        // 如果是第一次发生错误，需要将err_str记录下来
-                        let (rem, _) = err.base_err.errors.split_first().unwrap();
-                        debug_println!("rem: {}", rem.0);
-                        let completion = if !delete {
-                            cur_completion.to_string()
-                        } else {
-                            String::new()
-                        };
-                        err.err_type = if rem.0.is_empty() {
-                            ErrType::Completion {
-                                completion,
-                                json_type,
-                                // 所有的completion都在返回上一级后提交（可能会丢弃）
-                            }
-                        } else {
-                            ErrType::Failure
-                        };
-                        err.err_str = Some(cur_str)
-                    } else {
-                        // 不是第一次发生错误，做push_str直接将错误向后传递即可
-                        if let ErrType::Completion {
-                            ref mut completion, ..
-                        } = err.err_type
-                        {
-                            if !delete {
-                                completion.push_str(cur_completion)
-                            }
-                        }
+        self.func_cast(
+            |err| {
+                let (rem, _) = err.base_err.errors.split_first().unwrap();
+                debug_println!("rem: {}", rem.0);
+                let completion = if !delete {
+                    cur_completion.to_string()
+                } else {
+                    String::new()
+                };
+                err.err_type = if rem.0.is_empty() {
+                    ErrType::Completion {
+                        completion,
+                        json_type,
+                        // 所有的completion都在返回上一级后提交（可能会丢弃）
                     }
-                }
-                _ => panic!("should not reach here: Incomplete Arm"),
-            }
-        }
-        self
+                } else {
+                    ErrType::Failure
+                };
+                err.err_str = Some(cur_str)
+            },
+            cur_completion,
+            delete,
+        )
     }
 
     fn is_invalid(&self) -> bool {
@@ -120,7 +105,7 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
         self.is_err() && !self.is_invalid()
     }
 
-    fn func_cast<F>(mut self, func: F) -> Self
+    fn func_cast<F>(mut self, func: F, cur_completion: &str, delete: bool) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>),
     {
@@ -129,8 +114,17 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                 nom::Err::Error(err) | nom::Err::Failure(err) => {
                     if err.err_str.is_none() {
                         func(err);
+                    } else {
+                        // 不是第一次发生错误，需要对completion做补足
+                        if let ErrType::Completion {
+                            ref mut completion, ..
+                        } = err.err_type
+                        {
+                            if !delete {
+                                completion.push_str(cur_completion)
+                            }
+                        }
                     }
-                    // 不是第一次发生错误，不做处理直接将错误向后传递即可
                 }
                 _ => panic!("should not reach here: Incomplete Arm"),
             }
@@ -221,28 +215,32 @@ fn parse_spec(i: &str) -> ParseRes<&str> {
         ("Infinity", 1),
         ("-Infinity", 2),
     ];
-    res.func_cast(|err_res| {
-        err_res.err_str = Some(i);
-        let completion = spec_vec
-            .iter()
-            .find_map(|(pattern, min_len)| {
-                if utils::is_prefix_with_min_length(pattern, i, *min_len) {
-                    utils::complement_after(pattern, i)
-                } else {
-                    None
+    res.func_cast(
+        |err_res| {
+            err_res.err_str = Some(i);
+            let completion = spec_vec
+                .iter()
+                .find_map(|(pattern, min_len)| {
+                    if utils::is_prefix_with_min_length(pattern, i, *min_len) {
+                        utils::complement_after(pattern, i)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
+            err_res.err_type = if completion.is_empty() {
+                ErrType::Failure
+            } else {
+                // 这是最小的一级，所以不需要考虑append
+                ErrType::Completion {
+                    completion: completion.to_string(),
+                    json_type: JsonType::Spec,
                 }
-            })
-            .unwrap_or("");
-        err_res.err_type = if completion.is_empty() {
-            ErrType::Failure
-        } else {
-            // 这是最小的一级，所以不需要考虑append
-            ErrType::Completion {
-                completion: completion.to_string(),
-                json_type: JsonType::Spec,
             }
-        }
-    })
+        },
+        "",
+        false,
+    )
 }
 
 #[allow(unused)]
