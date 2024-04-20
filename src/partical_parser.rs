@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use nom::branch::alt;
 use nom::bytes::complete::{escaped, tag, take, take_till, take_while, take_while1};
-use nom::character::complete::{char, one_of};
-use nom::combinator::{complete, cut, map, map_res};
+use nom::character::complete::{char, digit1, one_of};
+use nom::combinator::{cut, opt, recognize};
 use nom::error::{FromExternalError, ParseError, VerboseError};
 use nom::sequence::{delimited, preceded, separated_pair, terminated, tuple};
 use nom::{IResult, Offset};
@@ -26,6 +26,7 @@ enum ErrType {
     #[default]
     Failure,
     Completion {
+        delete: bool,
         json_type: JsonType,
         completion: String,
     },
@@ -44,8 +45,25 @@ trait ErrCast<'a> {
     fn func_cast<F>(self, func: F, cur_completion: &str, delete: bool) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>);
+    fn func_incomplete_cast<F>(
+        self,
+        cur_str: &'a str,
+        func: F,
+        cur_completion: &str,
+        delete: bool,
+    ) -> Self
+    where
+        F: Fn(&mut ErrRes<'a, &str>);
+    fn incomplete_cast(
+        self,
+        cur_str: &'a str,
+        cur_completion: &str,
+        json_type: JsonType,
+        delete: bool,
+    ) -> Self;
     fn is_invalid(&self) -> bool;
     fn is_incomplete(&self) -> bool;
+    fn is_delete(&self) -> bool;
 }
 
 impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
@@ -67,9 +85,9 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                 };
                 err.err_type = if rem.0.is_empty() {
                     ErrType::Completion {
+                        delete,
                         completion,
                         json_type,
-                        // 所有的completion都在返回上一级后提交（可能会丢弃）
                     }
                 } else {
                     ErrType::Failure
@@ -117,9 +135,12 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                     } else {
                         // 不是第一次发生错误，需要对completion做补足
                         if let ErrType::Completion {
-                            ref mut completion, ..
+                            ref mut completion,
+                            delete: ref mut delete_,
+                            ..
                         } = err.err_type
                         {
+                            *delete_ = delete;
                             if !delete {
                                 completion.push_str(cur_completion)
                             }
@@ -130,6 +151,87 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
             }
         }
         self
+    }
+
+    fn is_delete(&self) -> bool {
+        if let Err(err) = self {
+            match err {
+                nom::Err::Error(err) | nom::Err::Failure(err) => {
+                    if let ErrType::Completion { delete, .. } = err.err_type {
+                        delete
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    fn func_incomplete_cast<F>(
+        mut self,
+        cur_str: &'a str,
+        func: F,
+        cur_completion: &str,
+        delete: bool,
+    ) -> Self
+    where
+        F: Fn(&mut ErrRes<'a, &str>),
+    {
+        if let Ok((rem, _)) = &self {
+            if let Ok((rem, _)) = sp(rem) {
+                if let Some(c) = rem.chars().next() {
+                    if c == ',' || c == ']' || c == '}' {
+                        return self;
+                    }
+                }
+            } else {
+                panic!("Unexpected behaviour")
+            }
+            // 这里已经是不完整的，所以直接传入空字符即可
+            let mut err_res = ErrRes::from_error_kind("", nom::error::ErrorKind::Fail);
+            func(&mut err_res);
+            self = Err(nom::Err::Error(err_res)); 
+        } else {
+            self = self.func_cast(func, cur_completion, delete);
+        }
+        self
+    }
+    
+    fn incomplete_cast(
+        self,
+        cur_str: &'a str,
+        cur_completion: &str,
+        json_type: JsonType,
+        delete: bool,
+    ) -> Self {
+        self.func_incomplete_cast(
+            cur_str,
+            |err| {
+                let (rem, _) = err.base_err.errors.split_first().unwrap();
+                debug_println!("rem: {}", rem.0);
+                let completion = if !delete {
+                    cur_completion.to_string()
+                } else {
+                    String::new()
+                };
+                err.err_type = if rem.0.is_empty() {
+                    ErrType::Completion {
+                        delete,
+                        completion,
+                        json_type,
+                    }
+                } else {
+                    ErrType::Failure
+                };
+                debug_println!("Err: {:?}", err.err_type);
+                err.err_str = Some(cur_str)
+            },
+            cur_completion,
+            delete,
+        )
     }
 }
 
@@ -193,7 +295,7 @@ fn parse_key_value(i: &str) -> ParseRes<(&str, &str)> {
         cut(preceded(sp, char(':'))),
         parse_string,
     )(i);
-    res.cast(i, "", JsonType::KeyVal, true)
+    res.cast(i, ",", JsonType::KeyVal, false)
 }
 
 fn parse_spec(i: &str) -> ParseRes<&str> {
@@ -233,6 +335,7 @@ fn parse_spec(i: &str) -> ParseRes<&str> {
             } else {
                 // 这是最小的一级，所以不需要考虑append
                 ErrType::Completion {
+                    delete: false,
                     completion: completion.to_string(),
                     json_type: JsonType::Spec,
                 }
@@ -241,6 +344,28 @@ fn parse_spec(i: &str) -> ParseRes<&str> {
         "",
         false,
     )
+}
+
+// 解析可能的科学计数尾部
+fn parse_e_(input: &str) -> ParseRes<&str> {
+    let parse_sign = opt(alt((char('-'), char('+'))));
+    let parse_e = alt((char('e'), char('E')));
+    let parse_tuple = tuple((parse_e, parse_sign, digit1));
+    recognize(parse_tuple)(input)
+}
+
+// 解析基数，包括整数部分和可选的小数部分
+fn parse_base_(input: &str) -> ParseRes<&str> {
+    recognize(tuple((
+        opt(char('-')),
+        digit1,
+        opt(preceded(char('.'), digit1)),
+    )))(input)
+}
+
+fn parse_num(i: &str) -> ParseRes<&str> {
+    let parse_tuple = tuple((parse_base_, opt(parse_e_)));
+    recognize(parse_tuple)(i).incomplete_cast(i, "", JsonType::Num, true)
 }
 
 #[allow(unused)]
@@ -310,6 +435,7 @@ mod test_string {
             Err(nom::Err::Error(err)) | Err(nom::Err::Failure(err)) => {
                 assert_eq!(
                     ErrType::Completion {
+                        delete: false,
                         completion: r#"""#.to_string(),
                         json_type: JsonType::Str
                     },
@@ -330,7 +456,8 @@ mod test_keyval {
     fn test_keyval_incomplete() {
         quick_test_failed!(r#""laljfw""#, parse_key_value,
             ErrType::Completion {
-                completion: r#""#.to_string(),
+                delete: false,
+                completion: r#","#.to_string(),
                 json_type: JsonType::KeyVal
             } => err_type,
             Some(r#""laljfw""#) => err_str
@@ -364,6 +491,7 @@ mod test_boolean {
     fn test_bool_incomplete() {
         quick_test_failed!("tr", parse_spec,
             ErrType::Completion {
+                delete: false,
                 completion: "ue".to_string(),
                 json_type: JsonType::Spec,
             } => err_type,
@@ -372,6 +500,7 @@ mod test_boolean {
 
         quick_test_failed!("fal", parse_spec,
             ErrType::Completion {
+                delete: false,
                 completion: "se".to_string(),
                 json_type: JsonType::Spec,
             } => err_type,
@@ -380,6 +509,7 @@ mod test_boolean {
 
         quick_test_failed!("Na", parse_spec,
             ErrType::Completion {
+                delete: false,
                 completion: "N".to_string(),
                 json_type: JsonType::Spec,
             } => err_type,
@@ -388,6 +518,7 @@ mod test_boolean {
 
         quick_test_failed!("N", parse_spec,
             ErrType::Completion {
+                delete: false,
                 completion: "ull".to_string(),
                 json_type: JsonType::Spec,
             } => err_type,
@@ -396,6 +527,7 @@ mod test_boolean {
 
         quick_test_failed!("Inf", parse_spec,
             ErrType::Completion {
+                delete: false,
                 completion: "inity".to_string(),
                 json_type: JsonType::Spec,
             } => err_type,
@@ -404,6 +536,7 @@ mod test_boolean {
 
         quick_test_failed!("-I", parse_spec,
             ErrType::Completion {
+                delete: false,
                 completion: "nfinity".to_string(),
                 json_type: JsonType::Spec,
             } => err_type,
@@ -438,4 +571,45 @@ mod test_boolean {
             Some("Nau") => err_str
         );
     }
+}
+
+mod test_num {
+    use super::*;
+
+    #[test]
+    fn test_num_valid() {
+        quick_test_ok!("0,", parse_num, Ok((",", "0")));
+        quick_test_ok!("-0,", parse_num, Ok((",", "-0")));
+        quick_test_ok!("123,", parse_num, Ok((",", "123")));
+        quick_test_ok!("-123 ,", parse_num, Ok((" ,", "-123")));
+        quick_test_ok!("12.34,", parse_num, Ok((",", "12.34")));
+        quick_test_ok!("-12.34]", parse_num, Ok(("]", "-12.34")));
+        quick_test_ok!("0.123}", parse_num, Ok(("}", "0.123")));
+        quick_test_ok!("123e10  ]", parse_num, Ok(("  ]", "123e10")));
+        quick_test_ok!("123E10,", parse_num, Ok((",", "123E10")));
+        quick_test_ok!("123e+10  }", parse_num, Ok(("  }", "123e+10")));
+        quick_test_ok!("123e-10 ,", parse_num, Ok((" ,", "123e-10")));
+        quick_test_ok!("-123e-10,", parse_num, Ok((",", "-123e-10")));
+        quick_test_ok!(
+            "100000000000000000000000000,",
+            parse_num,
+            Ok((",", "100000000000000000000000000"))
+        );
+    }
+
+    #[test]
+    fn test_num_incomplete() {
+        assert!(parse_num("1e").is_incomplete());
+        assert!(parse_num("0").is_incomplete());
+        assert!(parse_num("-123").is_incomplete());
+        assert!(parse_num("0.123").is_incomplete());
+        assert!(parse_num("0.").is_incomplete());
+    }
+
+    // #[test]
+    // fn test_num_invalid() {
+    //     assert!(parse_num("-").is_incomplete());
+    //     assert!(parse_num(".123").is_invalid());
+    //     assert!(parse_num("12.3.4").is_invalid());
+    // }
 }
