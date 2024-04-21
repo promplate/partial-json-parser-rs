@@ -5,6 +5,7 @@ use nom::bytes::complete::{escaped, tag, take, take_till, take_while, take_while
 use nom::character::complete::{char, digit1, one_of};
 use nom::combinator::{cut, opt, recognize};
 use nom::error::{FromExternalError, ParseError, VerboseError};
+use nom::multi::{separated_list0, separated_list1};
 use nom::sequence::{delimited, preceded, separated_pair, terminated, tuple};
 use nom::{IResult, Offset};
 
@@ -45,13 +46,7 @@ trait ErrCast<'a> {
     fn func_cast<F>(self, func: F, cur_completion: &str, delete: bool) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>);
-    fn func_incomplete_cast<F>(
-        self,
-        cur_str: &'a str,
-        func: F,
-        cur_completion: &str,
-        delete: bool,
-    ) -> Self
+    fn func_incomplete_cast<F>(self, func: F, cur_completion: &str, delete: bool) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>);
     fn incomplete_cast(
@@ -170,13 +165,7 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
         }
     }
 
-    fn func_incomplete_cast<F>(
-        mut self,
-        cur_str: &'a str,
-        func: F,
-        cur_completion: &str,
-        delete: bool,
-    ) -> Self
+    fn func_incomplete_cast<F>(mut self, func: F, cur_completion: &str, delete: bool) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>),
     {
@@ -193,13 +182,13 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
             // 这里已经是不完整的，所以直接传入空字符即可
             let mut err_res = ErrRes::from_error_kind("", nom::error::ErrorKind::Fail);
             func(&mut err_res);
-            self = Err(nom::Err::Error(err_res)); 
+            self = Err(nom::Err::Error(err_res));
         } else {
             self = self.func_cast(func, cur_completion, delete);
         }
         self
     }
-    
+
     fn incomplete_cast(
         self,
         cur_str: &'a str,
@@ -208,10 +197,9 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
         delete: bool,
     ) -> Self {
         self.func_incomplete_cast(
-            cur_str,
             |err| {
                 let (rem, _) = err.base_err.errors.split_first().unwrap();
-                debug_println!("rem: {}", rem.0);
+                // debug_println!("rem: {}", rem.0);
                 let completion = if !delete {
                     cur_completion.to_string()
                 } else {
@@ -226,7 +214,7 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                 } else {
                     ErrType::Failure
                 };
-                debug_println!("Err: {:?}", err.err_type);
+                // debug_println!("Err: {:?}", err.err_type);
                 err.err_str = Some(cur_str)
             },
             cur_completion,
@@ -262,6 +250,11 @@ impl<'a, I> ParseError<I> for ErrRes<'a, I> {
         other.base_err = VerboseError::append(input, kind, other.base_err);
         other
     }
+}
+
+#[allow(dead_code, unused)]
+fn parse_any(i: &str) -> ParseRes<&str> {
+    todo!()
 }
 
 fn is_space(c: char) -> bool {
@@ -366,6 +359,14 @@ fn parse_base_(input: &str) -> ParseRes<&str> {
 fn parse_num(i: &str) -> ParseRes<&str> {
     let parse_tuple = tuple((parse_base_, opt(parse_e_)));
     recognize(parse_tuple)(i).incomplete_cast(i, "", JsonType::Num, true)
+}
+
+fn parse_arr(i: &str) -> ParseRes<&str> {
+    let content = alt((parse_num, parse_spec, parse_string, parse_arr));
+    let content_with_sp = tuple((sp, content, sp));
+    let contents = separated_list0(char(','), content_with_sp);
+    let match_tuple = tuple((char('['), contents, char(']')));
+    recognize(match_tuple)(i).cast(i, "]", JsonType::Array, false)
 }
 
 #[allow(unused)]
@@ -574,6 +575,7 @@ mod test_boolean {
 }
 
 mod test_num {
+    #[allow(unused)]
     use super::*;
 
     #[test]
@@ -612,4 +614,33 @@ mod test_num {
     //     assert!(parse_num(".123").is_invalid());
     //     assert!(parse_num("12.3.4").is_invalid());
     // }
+}
+
+mod test_array {
+    #[allow(unused)]
+    use super::*;
+
+    #[test]
+    fn test_arr_valid() {
+        quick_test_ok!(
+            r#"["apple", "banana", "cherry"]"#,
+            parse_arr,
+            Ok(("", r#"["apple", "banana", "cherry"]"#))
+        );
+        quick_test_ok!(
+            r#"[1, 2, 3, 4, 5]"#,
+            parse_arr,
+            Ok(("", r#"[1, 2, 3, 4, 5]"#))
+        );
+        quick_test_ok!(
+            r#"[true, false, false, true]"#,
+            parse_arr,
+            Ok(("", r#"[true, false, false, true]"#))
+        );
+        quick_test_ok!(
+            r#"[[1, 2, 3], [4, 5, 6], ["seven", "eight", "nine"]]"#,
+            parse_arr,
+            Ok(("", r#"[[1, 2, 3], [4, 5, 6], ["seven", "eight", "nine"]]"#))
+        );
+    }
 }
