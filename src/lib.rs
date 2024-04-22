@@ -1,4 +1,4 @@
-mod partical_parser;
+mod partial_parser;
 mod utils;
 use pyo3::prelude::*;
 
