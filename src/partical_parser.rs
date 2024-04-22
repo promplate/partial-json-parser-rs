@@ -252,9 +252,15 @@ impl<'a, I> ParseError<I> for ErrRes<'a, I> {
     }
 }
 
+macro_rules! with_sp {
+    ($input: expr) => {
+        tuple((sp, $input, sp))
+    };
+}
+
 #[allow(dead_code, unused)]
 fn parse_any(i: &str) -> ParseRes<&str> {
-    todo!()
+    alt((parse_arr, parse_obj, parse_num, parse_spec, parse_string))(i)
 }
 
 fn is_space(c: char) -> bool {
@@ -265,7 +271,7 @@ fn sp(i: &str) -> ParseRes<&str> {
     take_while(is_space)(i)
 }
 
-pub fn is_string_character(c: char) -> bool {
+fn is_string_character(c: char) -> bool {
     //FIXME: should validate unicode character
     c != '"' && c != '\\'
 }
@@ -278,16 +284,29 @@ fn parse_string(i: &str) -> ParseRes<&str> {
             char('\"'),
         ),
     )(i);
+    // debug_println!("string: {:#?}", res);
     res.cast(i, "\"", JsonType::Str, false)
+}
+
+fn parse_key(i: &str) -> ParseRes<&str> {
+    let res: Result<(&str, &str), nom::Err<ErrRes<&str>>> = preceded(
+        char('\"'),
+        terminated(
+            escaped(take_while1(is_string_character), '\\', one_of("\"bfnrt\\")),
+            char('\"'),
+        ),
+    )(i);
+    res.cast(i, "", JsonType::Str, true)
 }
 
 fn parse_key_value(i: &str) -> ParseRes<(&str, &str)> {
     // 临时用parse_string顶替一下，测试
     let res: ParseRes<(&str, &str)> = separated_pair(
-        preceded(sp, parse_string),
-        cut(preceded(sp, char(':'))),
-        parse_string,
+        preceded(sp, parse_key),
+        cut(with_sp!(char(':'))),
+        parse_any,
     )(i);
+    // debug_println!("key_val: {:#?}", res);
     res.cast(i, ",", JsonType::KeyVal, false)
 }
 
@@ -363,10 +382,18 @@ fn parse_num(i: &str) -> ParseRes<&str> {
 
 fn parse_arr(i: &str) -> ParseRes<&str> {
     let content = alt((parse_num, parse_spec, parse_string, parse_arr));
-    let content_with_sp = tuple((sp, content, sp));
-    let contents = separated_list0(char(','), content_with_sp);
-    let match_tuple = tuple((char('['), contents, char(']')));
+    let separator = tuple((sp, char(','), sp));
+    let contents = separated_list0(separator, content);
+    let match_tuple = tuple((with_sp!(char('[')), contents, with_sp!(char(']'))));
     recognize(match_tuple)(i).cast(i, "]", JsonType::Array, false)
+}
+
+fn parse_obj(i: &str) -> ParseRes<&str> {
+    let content = parse_key_value;
+    let separator = tuple((sp, char(','), sp));
+    let contents = separated_list0(separator, content);
+    let match_tuple = tuple((with_sp!(char('{')), contents, with_sp!(char('}'))));
+    recognize(match_tuple)(i).cast(i, "}", JsonType::Object, false)
 }
 
 #[allow(unused)]
@@ -642,5 +669,49 @@ mod test_array {
             parse_arr,
             Ok(("", r#"[[1, 2, 3], [4, 5, 6], ["seven", "eight", "nine"]]"#))
         );
+    }
+}
+
+mod test_obj {
+    #[allow(unused)]
+    use super::*;
+
+    #[test]
+    fn test_obj_valid() {
+        quick_test_ok!(
+            r#"{
+                "name": "John",
+                "age": 30,
+                "city": "New York"
+              }"#,
+            parse_obj,
+            Ok((
+                "",
+                r#"{
+                "name": "John",
+                "age": 30,
+                "city": "New York"
+              }"#
+            ))
+        );
+
+        assert!(parse_obj(r#"{
+            "name": "John",
+            "age": 30,
+            "city": "New York",
+            "hobbies": ["reading", "gaming", "cooking"]
+        }"#).is_ok());
+
+        assert!(parse_obj(r#"{
+            "name": "John",
+            "age": 30,
+            "city": "New York",
+            "address": {
+              "street": "123 Main St",
+              "city": "New York",
+              "state": "NY",
+              "zip": "10001"
+            }
+          }"#).is_ok());
     }
 }
