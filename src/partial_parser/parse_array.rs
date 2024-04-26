@@ -1,5 +1,6 @@
 use crate::with_sp;
 use nom::character::complete::char;
+use nom::combinator::cut;
 use nom::{branch::alt, combinator::recognize, multi::separated_list0, sequence::tuple};
 
 use super::{parse_any::parse_any, ErrCast};
@@ -13,8 +14,8 @@ use super::{
 pub(super) fn parse_arr(i: &str) -> ParseRes<&str> {
     let content = parse_any;
     let separator = tuple((sp, char(','), sp));
-    let contents = separated_list0(separator, content);
-    let match_tuple = tuple((with_sp!(char('[')), contents, with_sp!(char(']'))));
+    let contents = separated_list0(separator, cut(content));
+    let match_tuple = tuple((with_sp!(char('[')), cut(contents), with_sp!(char(']'))));
     recognize(match_tuple)(i).cast(i, "]", JsonType::Array, false)
 }
 

@@ -11,19 +11,19 @@ pub(super) fn parse_spec(i: &str) -> ParseRes<&str> {
         tag("false"),
         tag("true"),
         tag("NaN"),
-        tag("Null"),
+        tag("null"),
         tag("Infinity"),
         tag("-Infinity"),
     ))(i);
     let spec_vec = [
         ("true", 1),
         ("false", 1),
-        ("NaN", 2),
-        ("Null", 1),
+        ("NaN", 1),
+        ("null", 1),
         ("Infinity", 1),
         ("-Infinity", 2),
     ];
-    res.func_cast(
+    let res = res.func_cast(
         |err_res| {
             err_res.err_str = Some(i);
             let completion = spec_vec
@@ -47,9 +47,14 @@ pub(super) fn parse_spec(i: &str) -> ParseRes<&str> {
                 }
             }
         },
+        i,
         "",
         false,
-    )
+    );
+    if res.is_incomplete() {
+        return res.try_to_failure();
+    }
+    res
 }
 
 #[cfg(test)]
@@ -63,7 +68,7 @@ mod test_spec {
         quick_test_ok!("true", parse_spec, Ok(("", "true")));
         quick_test_ok!("false", parse_spec, Ok(("", "false")));
         quick_test_ok!("NaN", parse_spec, Ok(("", "NaN")));
-        quick_test_ok!("Null", parse_spec, Ok(("", "Null")));
+        quick_test_ok!("null", parse_spec, Ok(("", "null")));
         quick_test_ok!("Infinity", parse_spec, Ok(("", "Infinity")));
         quick_test_ok!("-Infinity", parse_spec, Ok(("", "-Infinity")));
     }
@@ -97,13 +102,13 @@ mod test_spec {
             Some("Na") => err_str
         );
 
-        quick_test_failed!("N", parse_spec,
+        quick_test_failed!("n", parse_spec,
             ErrType::Completion {
                 delete: false,
                 completion: "ull".to_string(),
                 json_type: JsonType::Spec,
             } => err_type,
-            Some("N") => err_str
+            Some("n") => err_str
         );
 
         quick_test_failed!("Inf", parse_spec,

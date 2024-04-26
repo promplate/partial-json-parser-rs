@@ -1,6 +1,5 @@
 use nom::{
-    error::{ParseError, VerboseError},
-    IResult,
+    branch::alt, error::{ParseError, VerboseError}, IResult
 };
 
 mod parse_any;
@@ -9,13 +8,14 @@ mod parse_num;
 mod parse_obj;
 mod parse_spec;
 mod parse_string;
-use crate::debug_println;
+use crate::{debug_println, utils::{exclude_substring, remove_trailing_comma_and_whitespace}};
 
-use self::parse_string::sp;
+use self::{parse_array::parse_arr, parse_obj::parse_obj, parse_string::sp};
 
 #[derive(Debug, PartialEq, Eq, Default, Clone, Copy)]
 pub enum JsonType {
     #[default]
+    Any,
     Str,
     Spec,
     Num,
@@ -73,10 +73,16 @@ trait ErrCast<'a> {
         json_type: JsonType,
         delete: bool,
     ) -> Self;
-    fn func_cast<F>(self, func: F, cur_completion: &str, delete: bool) -> Self
+    fn func_cast<F>(self, func: F, cur_str: &'a str, cur_completion: &str, delete: bool) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>);
-    fn func_incomplete_cast<F>(self, func: F, cur_completion: &str, delete: bool) -> Self
+    fn func_incomplete_cast<F>(
+        self,
+        func: F,
+        cur_str: &'a str,
+        cur_completion: &str,
+        delete: bool,
+    ) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>);
     fn incomplete_cast(
@@ -86,9 +92,16 @@ trait ErrCast<'a> {
         json_type: JsonType,
         delete: bool,
     ) -> Self;
+    fn try_to_failure(self) -> Self;
     fn is_invalid(&self) -> bool;
     fn is_incomplete(&self) -> bool;
     fn is_delete(&self) -> bool;
+    fn completion(&self) -> Option<String>;
+}
+
+fn remove_sp(i: &str) -> &str {
+    let (rem, _) = sp(i).unwrap();
+    rem
 }
 
 impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
@@ -102,13 +115,13 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
         self.func_cast(
             |err| {
                 let (rem, _) = err.base_err.errors.split_first().unwrap();
-                debug_println!("rem: {}", rem.0);
+                // debug_println!("rem: {}", rem.0);
                 let completion = if !delete {
                     cur_completion.to_string()
                 } else {
                     String::new()
                 };
-                err.err_type = if rem.0.is_empty() {
+                err.err_type = if remove_sp(rem.0).is_empty() {
                     ErrType::Completion {
                         delete,
                         completion,
@@ -119,6 +132,7 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                 };
                 err.err_str = Some(cur_str)
             },
+            cur_str,
             cur_completion,
             delete,
         )
@@ -131,7 +145,7 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                 nom::Err::Error(err) | nom::Err::Failure(err) => {
                     if err.err_str.is_none() {
                         let (rem, _) = err.base_err.errors.split_first().unwrap();
-                        invalid = !rem.0.is_empty();
+                        invalid = !remove_sp(rem.0).is_empty();
                     } else {
                         invalid = err.err_type == ErrType::Failure;
                     }
@@ -148,7 +162,7 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
         self.is_err() && !self.is_invalid()
     }
 
-    fn func_cast<F>(mut self, func: F, cur_completion: &str, delete: bool) -> Self
+    fn func_cast<F>(mut self, func: F, cur_str: &'a str, cur_completion: &str, delete: bool) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>),
     {
@@ -168,6 +182,9 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                             *delete_ = delete;
                             if !delete {
                                 completion.push_str(cur_completion)
+                            }
+                            if delete {
+                                err.err_str = Some(cur_str)
                             }
                         }
                     }
@@ -195,7 +212,13 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
         }
     }
 
-    fn func_incomplete_cast<F>(mut self, func: F, cur_completion: &str, delete: bool) -> Self
+    fn func_incomplete_cast<F>(
+        mut self,
+        func: F,
+        cur_str: &'a str,
+        cur_completion: &str,
+        delete: bool,
+    ) -> Self
     where
         F: Fn(&mut ErrRes<'a, &str>),
     {
@@ -214,7 +237,7 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
             func(&mut err_res);
             self = Err(nom::Err::Error(err_res));
         } else {
-            self = self.func_cast(func, cur_completion, delete);
+            self = self.func_cast(func, cur_str, cur_completion, delete);
         }
         self
     }
@@ -235,7 +258,7 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                 } else {
                     String::new()
                 };
-                err.err_type = if rem.0.is_empty() {
+                err.err_type = if remove_sp(rem.0).is_empty() {
                     ErrType::Completion {
                         delete,
                         completion,
@@ -247,8 +270,84 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
                 // debug_println!("Err: {:?}", err.err_type);
                 err.err_str = Some(cur_str)
             },
+            cur_str,
             cur_completion,
             delete,
         )
+    }
+
+    fn completion(&self) -> Option<String> {
+        if let Err(err) = self {
+            match err {
+                nom::Err::Error(err) | nom::Err::Failure(err) => {
+                    if let ErrType::Completion { ref completion, .. } = err.err_type {
+                        return Some(completion.clone());
+                    }
+                }
+                _ => panic!("should not reach here: Incomplete Arm"),
+            }
+        }
+        None
+    }
+
+    fn try_to_failure(self) -> Self {
+        if let Err(err) = self {
+            if let nom::Err::Error(err) = err {
+                return Err(nom::Err::Failure(err));
+            }
+            Err(err)
+        } else {
+            self
+        }
+    }
+    
+}
+
+
+fn complete(i: &str) -> Result<String, String> {
+    let res = alt((parse_obj, parse_arr))(i);
+    println!("comp res: {:#?}", res);
+    if let Ok((_, res_str)) = res {
+        Ok(res_str.to_string())
+    } else if let Err(nom::Err::Error(err) | nom::Err::Failure(err)) = res {
+        let comp_string = if let ErrType::Completion { completion, .. } = err.err_type {
+            completion
+        } else {
+            String::default()
+        };
+        let mut res_string = if let Some(err_str) = err.err_str {
+            exclude_substring(i, err_str)
+        } else {
+            String::from(i)
+        };
+        // 需要对最终的结果进行修饰，删除可能的逗号
+        remove_trailing_comma_and_whitespace(&mut res_string);
+        res_string.push_str(&comp_string);
+        
+        Ok(res_string)
+    } else {
+        return Err(String::from("Unexpected behaviour"));
+    }
+    // res
+    // .map(|(_, out)| out)
+    // .map_err(|_| String::from("Error"))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_obj_completion1() {
+        let res = complete(
+            r#"{
+                "person": {
+                  "name": "John Doe",
+                  "age": 30,
+                  "is_student": false
+                }
+                "#,
+        );
+        println!("complete: {:#?}", res);
     }
 }

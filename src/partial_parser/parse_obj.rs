@@ -8,25 +8,39 @@ use nom::{
 use crate::with_sp;
 
 use super::parse_any::parse_any;
+use super::ErrType;
 use super::{
     parse_string::{parse_key, sp},
     ErrCast, JsonType, ParseRes,
 };
 
+fn sep(i: &str) -> ParseRes<&str> {
+    let mut res = recognize(with_sp!(char(':')))(i);
+    if let Err(nom::Err::Error(ref mut err) | nom::Err::Failure(ref mut err)) = res {
+        err.err_type = ErrType::Completion { delete: true, json_type: JsonType::KeyVal, completion: String::from("") };
+    }
+    println!("sep: {:#?}", res);
+    res
+}
+
 fn parse_key_value(i: &str) -> ParseRes<(&str, &str)> {
-    // 临时用parse_string顶替一下，测试
-    let res: ParseRes<(&str, &str)> =
-        separated_pair(preceded(sp, parse_key), cut(with_sp!(char(':'))), parse_any)(i);
-    // debug_println!("key_val: {:#?}", res);
-    res.cast(i, ",", JsonType::KeyVal, false)
+    let res: ParseRes<(&str, &str)> = separated_pair(preceded(sp, parse_key), sep, parse_any)(i);
+    println!("key_val: {:#?}", res);
+    let is_delete = res.is_delete();
+    res.cast(i, "", JsonType::KeyVal, is_delete)
 }
 
 pub(super) fn parse_obj(i: &str) -> ParseRes<&str> {
     let content = parse_key_value;
     let separator = tuple((sp, char(','), sp));
-    let contents = separated_list0(separator, content);
+    let contents = separated_list0(separator, cut(content));
     let match_tuple = tuple((with_sp!(char('{')), contents, with_sp!(char('}'))));
-    recognize(match_tuple)(i).cast(i, "}", JsonType::Object, false)
+    let res = recognize(match_tuple)(i);
+    let res = res.cast(i, "}", JsonType::Object, false);
+    if res.is_incomplete() {
+        return res.try_to_failure();
+    }
+    res
 }
 
 #[cfg(test)]
@@ -79,5 +93,33 @@ mod test_obj {
           }"#
         )
         .is_ok());
+    }
+
+    #[test]
+    fn test_obj_completion() {
+        let res = parse_obj(
+            r#"{
+            "name": "John",
+            "age": 30,
+            "city": "New York","#,
+        );
+        // println!("{:#?}", res);
+        println!("{:#?}", res.completion())
+    }
+
+    #[test]
+    fn test_obj_completion1() {
+        let res = parse_obj(
+            r#"{
+                "person": {
+                  "name": "John Doe",
+                  "age": 30,
+                  "is_student": false
+                },
+                "erd"
+                "#,
+        );
+        println!("{:#?}", res);
+        println!("{:#?}", res.completion())
     }
 }

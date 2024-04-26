@@ -26,7 +26,11 @@ fn parse_base_(input: &str) -> ParseRes<&str> {
 
 pub(super) fn parse_num(i: &str) -> ParseRes<&str> {
     let parse_tuple = tuple((parse_base_, opt(parse_e_)));
-    recognize(parse_tuple)(i).incomplete_cast(i, "", JsonType::Num, true)
+    let res = recognize(parse_tuple)(i).incomplete_cast(i, "", JsonType::Num, true);
+    if res.is_incomplete() {
+        return res.try_to_failure();
+    }
+    res
 }
 
 #[cfg(test)]
