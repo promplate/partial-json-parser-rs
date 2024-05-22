@@ -8,4 +8,4 @@ name = "partial_json_parser_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = "0.20.0"
+pyo3 = "0.21.2"
