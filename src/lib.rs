@@ -1,3 +1,5 @@
+mod parser;
+
 use pyo3::prelude::*;
 
 #[pyfunction]
