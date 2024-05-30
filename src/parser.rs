@@ -2,16 +2,42 @@ use crate::utils::{add_title, RunState};
 
 #[derive(Default, Debug)]
 enum State {
-    InStr,
+    InStr(EscapeCnt),
     #[default]
     NotInStr,
+}
+
+#[derive(Default, Debug)]
+struct EscapeCnt {
+    // 这是一个取值范围为[0, 2)的计数器
+    cnt: usize,
+}
+
+impl EscapeCnt {
+    fn new() -> EscapeCnt {
+        EscapeCnt {
+            cnt: 0
+        }
+    }
+
+    fn input(&mut self, c: char) -> CharType {
+        if self.cnt == 0 && c == '\\'{
+            self.cnt = 1;
+            CharType::Escape
+        } else if self.cnt == 0 && c == '"'{
+            CharType::Quotation
+        } else {
+            CharType::Normal
+        }
+    }
 }
 
 #[derive(Default, PartialEq, Eq, Debug)]
 enum CharType {
     Colon, // 冒号
     Comma, // 逗号
-    Quotation,
+    Quotation, // 引号，且不代表字符'"'
+    Escape, // 转义，且不代表字符'\'
     LFB, // left square bracket
     RFB, // left square bracket
     LCB, // left curly bracket
@@ -52,6 +78,7 @@ impl CharType {
             Self::Colon => ":",
             Self::Comma => ",",
             Self::Quotation => "\"",
+            Self::Escape => "\\",
             Self::LFB => "[",
             Self::RFB => "]",
             Self::LCB => "{",
@@ -73,7 +100,8 @@ impl CharType {
         match c {
             ':' => Self::Colon,
             ',' => Self::Comma,
-            '\"' => Self::Quotation,
+            '"' => Self::Quotation,
+            '\\' => Self::Escape,
             '[' => Self::LFB,
             ']' => Self::RFB,
             '{' => Self::LCB,
@@ -166,7 +194,21 @@ impl<'a> Parser<'a> {
 
     fn state_machine_input(&mut self, c: char) -> CharType {
         // 先不考虑转义，字符串内部存在特殊符号的情况的情况
-        CharType::simple_from_char(c)
+        match self.state {
+            State::NotInStr => {
+                if c == '"' {
+                    self.state = State::InStr(EscapeCnt::new());
+                }
+                CharType::simple_from_char(c)
+            },
+            State::InStr(ref mut cnt) => {
+                let res = cnt.input(c);
+                if let CharType::Quotation = res {
+                    self.state = State::NotInStr;
+                }
+                res
+            }
+        }
     }
 }
 

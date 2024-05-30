@@ -8,5 +8,6 @@ name = "partial_json_parser_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
+protest = "0.0.0"
 pyo3 = "0.21.2"
 regex = "1.4.2"
