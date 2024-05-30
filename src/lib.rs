@@ -1,4 +1,7 @@
 mod parser;
+#[cfg(test)]
+mod test_utils;
+mod utils;
 
 use pyo3::prelude::*;
 

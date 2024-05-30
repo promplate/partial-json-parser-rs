@@ -1,0 +1,7 @@
+{
+  "product_id": 12345,
+  "name": "Wireless Mouse",
+  "brand": "Logitech",
+  "price": 25.99,
+  "in_stock": true
+}
