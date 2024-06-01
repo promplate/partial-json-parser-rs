@@ -1,5 +1,10 @@
 use crate::utils::RunState;
+use proptest::prelude::*;
 use regex::Regex;
+use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
+use serde_json;
+use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 
 pub struct Tester {
@@ -106,5 +111,104 @@ impl Tester {
             let res = is_pass(item);
             self.results[idx] = res.into();
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Json {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<Json>),
+    Map(HashMap<String, Json>),
+}
+
+impl Serialize for Json {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Json::Null => serializer.serialize_unit(),
+            Json::Bool(b) => serializer.serialize_bool(*b),
+            Json::Number(n) => serializer.serialize_f64(*n),
+            Json::String(s) => serializer.serialize_str(s),
+            Json::Array(arr) => {
+                let mut seq = serializer.serialize_seq(Some(arr.len()))?;
+                for element in arr {
+                    seq.serialize_element(element)?;
+                }
+                seq.end()
+            }
+            Json::Map(map) => {
+                let mut map_serializer = serializer.serialize_map(Some(map.len()))?;
+                for (k, v) in map {
+                    map_serializer.serialize_entry(k, v)?;
+                }
+                map_serializer.end()
+            }
+        }
+    }
+}
+
+impl fmt::Display for Json {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = serde_json::to_string_pretty(self).unwrap();
+        write!(f, "{}", &s)
+    }
+}
+
+pub fn arb_json() -> impl Strategy<Value = Json> {
+    let leaf = prop_oneof![
+        Just(Json::Null),
+        any::<bool>().prop_map(Json::Bool),
+        any::<f64>().prop_map(Json::Number),
+        ".*".prop_map(|s| format!("\"{}\"", s.replace("\\", "\\\\").replace("\"", "\\\"")))
+            .prop_map(Json::String),
+    ];
+    leaf.prop_recursive(
+        8,   // 8 levels deep
+        256, // Shoot for maximum size of 256 nodes
+        10,  // We put up to 10 items per collection
+        |inner| {
+            prop_oneof![
+                // Take the inner strategy and make the two recursive cases.
+                prop::collection::vec(inner.clone(), 0..10).prop_map(Json::Array),
+                prop::collection::hash_map(".*", inner, 0..10).prop_map(Json::Map),
+            ]
+        },
+    )
+}
+
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_play() {
+        let json_null = Json::Null;
+        let json_bool = Json::Bool(true);
+        let json_number = Json::Number(42.0);
+        let json_string = Json::String("Hello, world!".to_string());
+        let json_array = Json::Array(vec![Json::Number(1.0), Json::Bool(false)]);
+        let mut map = HashMap::new();
+        map.insert("key1".to_string(), Json::String("value1".to_string()));
+        map.insert("key2".to_string(), Json::Number(10.0));
+        // let json_map = Json::Map(map);
+
+        // println!("{}", json_null);
+        // println!("{}", json_bool);
+        // println!("{}", json_number);
+        // println!("{}", json_string);
+        // println!("{}", json_array);
+        // println!("{}", json_map);
+
+        assert!(json_null.to_string() == "null");
+        assert!(json_bool.to_string() == "true");
+        assert!(json_number.to_string() == "42.0");
+        assert!(json_string.to_string() == r#""Hello, world!""#);
+        assert!(json_array.to_string() == "[1.0,false]");
+        // 这个由于map是无序的，所以确实测不了
+        // assert!(json_map.to_string() == r#"{"key1":"value1","key2":10.0}"#);
     }
 }

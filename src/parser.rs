@@ -15,17 +15,23 @@ struct EscapeCnt {
 
 impl EscapeCnt {
     fn new() -> EscapeCnt {
-        EscapeCnt {
-            cnt: 0
-        }
+        EscapeCnt { cnt: 0 }
+    }
+
+    #[inline]
+    fn valid_esc_char(c: &char) -> bool {
+        matches!(c, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u')
     }
 
     fn input(&mut self, c: char) -> CharType {
-        if self.cnt == 0 && c == '\\'{
+        if self.cnt == 0 && c == '\\' {
             self.cnt = 1;
             CharType::Escape
-        } else if self.cnt == 0 && c == '"'{
+        } else if self.cnt == 0 && c == '"' {
             CharType::Quotation
+        } else if self.cnt == 1 && Self::valid_esc_char(&c) {
+            self.cnt = 0;
+            CharType::Normal
         } else {
             CharType::Normal
         }
@@ -34,14 +40,14 @@ impl EscapeCnt {
 
 #[derive(Default, PartialEq, Eq, Debug)]
 enum CharType {
-    Colon, // 冒号
-    Comma, // 逗号
+    Colon,     // 冒号
+    Comma,     // 逗号
     Quotation, // 引号，且不代表字符'"'
-    Escape, // 转义，且不代表字符'\'
-    LFB, // left square bracket
-    RFB, // left square bracket
-    LCB, // left curly bracket
-    RCB, // right curly bracket
+    Escape,    // 转义，且不代表字符'\'
+    LFB,       // left square bracket
+    RFB,       // left square bracket
+    LCB,       // left curly bracket
+    RCB,       // right curly bracket
     #[default]
     Normal,
 }
@@ -150,7 +156,13 @@ impl<'a> Parser<'a> {
         s.push_str(&add_title("State"));
         s.push_str(&format!("{:?}\n", self.state));
         s.push_str(&add_title("Last Sep"));
-        s.push_str(&format!("{:?}\n", self.last_sep));
+        s.push_str(&format!(
+            "{:?}, {}\n",
+            self.last_sep,
+            self.last_sep
+                .map(|i| self.src_str[i..].to_string())
+                .unwrap_or("None".to_string())
+        ));
         if let RunState::Error(s1) = &self.is_parsed {
             s.push_str(&add_title("Parse State"));
             s.push_str(&format!("{}\n", s1));
@@ -200,7 +212,7 @@ impl<'a> Parser<'a> {
                     self.state = State::InStr(EscapeCnt::new());
                 }
                 CharType::simple_from_char(c)
-            },
+            }
             State::InStr(ref mut cnt) => {
                 let res = cnt.input(c);
                 if let CharType::Quotation = res {
@@ -214,7 +226,12 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::test_utils::Tester;
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    use crate::test_utils::{arb_json, Tester};
+    use proptest::prelude::*;
+    use proptest::*;
 
     use super::*;
 
@@ -245,5 +262,49 @@ mod test {
         tester.test_specific(parser_full_pass, Some("full[0-9]+"));
         tester.print_res();
         assert!(tester.is_ok());
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10000))]
+        #[test]
+        fn test_full_pass_prop(s in arb_json()) {
+            let s = s.to_string();
+            let mut parser = Parser {
+                src_str: &s,
+                ..Default::default()
+            };
+            parser.parse();
+            assert!(parser.is_parsed.is_success());
+            assert!(parser.stack.is_empty());
+            if let State::InStr(_) = parser.state {
+                panic!("State is InStr");
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(666))]
+        #[test]
+        fn test_part_pass_prop(s in arb_json()) {
+            let s = s.to_string();
+            for (i, _) in s.char_indices() {
+                if i == s.len() - 1 {
+                    break;
+                } else if i == 0 {
+                    continue;
+                }
+                let mut parser = Parser {
+                    src_str: &s[..i],
+                    ..Default::default()
+                };
+                parser.parse();
+                let collection_prefix = s.starts_with('[') || s.starts_with('{');
+                if parser.is_parsed.is_error() || (parser.stack.is_empty() && collection_prefix) {
+                    println!("String: {}", parser.src_str);
+                    println!("{}, is_error: {:?}, stack: {}", parser.parse_tracer(), parser.is_parsed, parser.stack.is_empty());
+                    panic!();
+                }
+            }
+        }
     }
 }
