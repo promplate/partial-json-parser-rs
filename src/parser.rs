@@ -118,12 +118,26 @@ impl CharType {
 }
 
 #[derive(Default, Debug)]
+struct ParseSettings {
+    // array and obj will always be cut
+    allow_null: bool,
+    allow_bool: bool,
+    allow_number: bool,
+    allow_string: bool,
+    allow_infinity: bool,
+    allow_ninfinity: bool,
+    allow_nan: bool,
+}
+
+#[derive(Default, Debug)]
 struct Parser<'a> {
     stack: Vec<(usize, CharType)>,
     state: State,
     src_str: &'a str,
     last_sep: Option<usize>,
+    last_colon: Option<usize>,
     is_parsed: RunState,
+    settings: ParseSettings,
 }
 
 impl<'a> Parser<'a> {
@@ -194,15 +208,35 @@ impl<'a> Parser<'a> {
                 }
             } else if char_type == CharType::Comma {
                 self.last_sep = Some(idx);
+            } else if char_type == CharType::Colon {
+                self.last_colon = Some(idx);
             }
         }
     }
 
-    #[allow(unused)]
-    fn amend(&mut self) {
-        assert!(self.is_parsed.is_not_none());
-        // 内部对parse后的结果进行修饰，以返回正确的结果
-    }
+    // fn cut_and_amend(&self, idx: usize) -> String {
+    //     // 这个函数是配合amend使用的，不能单独使用
+        
+    // }
+
+    // fn amend(&mut self) -> String {
+    //     assert!(self.is_parsed.is_not_none());
+    //     // 内部对parse后的结果进行修饰，以返回正确的结果
+    //     let cut_string = if let Some(last_sep) = self.last_sep {
+    //         let last_colon = self.last_colon.unwrap_or(last_sep);
+    //         if last_colon <= last_sep {
+    //             // 说明后面没有必要进行补全，直接删除即可
+    //             self.src_str[..last_sep].to_string()
+    //         } else {
+
+    //         }
+    //     } else {
+    //         // 应该考虑没有last_sep的情况
+    //         assert!(self.last_colon.is_none(), "None sep with None last colon");
+    //         self.src_str.to_string()
+    //     };
+
+    // }
 
     fn state_machine_input(&mut self, c: char) -> CharType {
         // 先不考虑转义，字符串内部存在特殊符号的情况的情况
@@ -226,12 +260,8 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod test {
-    use std::fs::OpenOptions;
-    use std::io::Write;
-
     use crate::test_utils::{arb_json, Tester};
     use proptest::prelude::*;
-    use proptest::*;
 
     use super::*;
 
@@ -283,7 +313,22 @@ mod test {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(666))]
+        #![proptest_config(ProptestConfig::with_cases(3))]
+        #[test]
+        fn test_my(s in arb_json()) {
+            use std::io::Write;
+            let s = s.to_string();
+            let mut fs_ = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open("./test.json").unwrap();
+
+            writeln!(fs_, "{}", s).unwrap();
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(10000))]
         #[test]
         fn test_part_pass_prop(s in arb_json()) {
             let s = s.to_string();

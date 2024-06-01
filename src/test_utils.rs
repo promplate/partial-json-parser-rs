@@ -2,7 +2,6 @@ use crate::utils::RunState;
 use proptest::prelude::*;
 use regex::Regex;
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
-use serde_json;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
@@ -117,6 +116,9 @@ impl Tester {
 #[derive(Clone, Debug)]
 pub enum Json {
     Null,
+    NaN,
+    Infinity,
+    NInfinity,
     Bool(bool),
     Number(f64),
     String(String),
@@ -131,6 +133,9 @@ impl Serialize for Json {
     {
         match self {
             Json::Null => serializer.serialize_unit(),
+            Json::NaN => serializer.serialize_f64(f64::NAN),
+            Json::Infinity => serializer.serialize_f64(f64::INFINITY),
+            Json::NInfinity => serializer.serialize_f64(f64::NEG_INFINITY),
             Json::Bool(b) => serializer.serialize_bool(*b),
             Json::Number(n) => serializer.serialize_f64(*n),
             Json::String(s) => serializer.serialize_str(s),
@@ -154,7 +159,7 @@ impl Serialize for Json {
 
 impl fmt::Display for Json {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = serde_json::to_string_pretty(self).unwrap();
+        let s = json5::to_string(self).unwrap();
         write!(f, "{}", &s)
     }
 }
@@ -162,10 +167,12 @@ impl fmt::Display for Json {
 pub fn arb_json() -> impl Strategy<Value = Json> {
     let leaf = prop_oneof![
         Just(Json::Null),
+        Just(Json::NaN),
+        Just(Json::Infinity),
+        Just(Json::NInfinity),
         any::<bool>().prop_map(Json::Bool),
         any::<f64>().prop_map(Json::Number),
-        ".*".prop_map(|s| format!("\"{}\"", s.replace("\\", "\\\\").replace("\"", "\\\"")))
-            .prop_map(Json::String),
+        ".*".prop_map(Json::String),
     ];
     leaf.prop_recursive(
         8,   // 8 levels deep
