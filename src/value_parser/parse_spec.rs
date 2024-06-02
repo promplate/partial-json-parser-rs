@@ -28,16 +28,14 @@ pub fn parse_spec(i: &str) -> Result<VParserRes, ()> {
         ("-Infinity", 2),
     ];
 
-    let completion = spec_vec
-    .iter()
-    .find_map(|(pattern, min_len)| {
+    let completion = spec_vec.iter().find_map(|(pattern, min_len)| {
         if utils::is_prefix_with_min_length(pattern, i, *min_len) {
             utils::complement_after(pattern, i)
         } else {
             None
         }
     });
-    
+
     if let Some(cmpl) = completion {
         Ok(VParserRes::new(i.to_string() + cmpl))
     } else if res.is_ok() && completion.is_none() {

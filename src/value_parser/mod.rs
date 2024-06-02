@@ -1,5 +1,6 @@
 use nom::{
-    error::{ParseError, VerboseError}, IResult
+    error::{ParseError, VerboseError},
+    IResult,
 };
 
 mod parse_num;
@@ -8,14 +9,16 @@ mod parse_string;
 
 use self::parse_string::sp;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct VParserRes {
     amend_value: String,
 }
 
 impl VParserRes {
     fn new(amend_value: impl ToString) -> VParserRes {
-        VParserRes { amend_value: amend_value.to_string() }
+        VParserRes {
+            amend_value: amend_value.to_string(),
+        }
     }
 }
 
@@ -307,5 +310,4 @@ impl<'a, O> ErrCast<'a> for ParseRes<'a, O> {
             self
         }
     }
-    
 }

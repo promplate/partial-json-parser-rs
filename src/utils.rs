@@ -116,7 +116,7 @@ pub fn exclude_substring(a: &str, b: &str) -> String {
 
     let mut result = String::new();
     result.push_str(&a[..b_start]); // 添加b之前的部分
-    result.push_str(&a[b_end..]);   // 添加b之后的部分
+    result.push_str(&a[b_end..]); // 添加b之后的部分
     result
 }
 

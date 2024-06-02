@@ -1,8 +1,6 @@
-use nom::{
-    bytes::complete::take_while, IResult
-};
 use super::VParserRes;
-use crate::parser::{ EscapeCnt, CharType };
+use crate::parser::{CharType, EscapeCnt};
+use nom::{bytes::complete::take_while, IResult};
 
 fn is_space(c: char) -> bool {
     c == ' ' || c == '\t' || c == '\r' || c == '\n'
@@ -45,7 +43,7 @@ pub fn parse_string(i: &str) -> Result<VParserRes, ()> {
             last_esc = Some(idx);
         }
     }
-    
+
     if need_cmpl {
         if esc_cnt.cnt() == 1 {
             // 这时候需要从最后一个转义符号恢复
@@ -55,9 +53,7 @@ pub fn parse_string(i: &str) -> Result<VParserRes, ()> {
         }
         amend_value.push('"')
     }
-    Ok(VParserRes {
-        amend_value
-    })
+    Ok(VParserRes { amend_value })
 }
 
 #[cfg(test)]
@@ -94,4 +90,4 @@ mod test {
             }
         }
     }
-} 
+}

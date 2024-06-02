@@ -18,15 +18,38 @@ pub struct EscapeCnt {
 
 impl EscapeCnt {
     pub fn new() -> EscapeCnt {
-        EscapeCnt { cnt: 0, u_mode: false, u_cnt: 0 }
+        EscapeCnt {
+            cnt: 0,
+            u_mode: false,
+            u_cnt: 0,
+        }
     }
 
     #[inline]
     fn valid_hex_char(c: &char) -> bool {
-        matches!(c, 
-            '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 
-            'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 
-            'A' | 'B' | 'C' | 'D' | 'E' | 'F'
+        matches!(
+            c,
+            '0' | '1'
+                | '2'
+                | '3'
+                | '4'
+                | '5'
+                | '6'
+                | '7'
+                | '8'
+                | '9'
+                | 'a'
+                | 'b'
+                | 'c'
+                | 'd'
+                | 'e'
+                | 'f'
+                | 'A'
+                | 'B'
+                | 'C'
+                | 'D'
+                | 'E'
+                | 'F'
         )
     }
 
@@ -256,7 +279,7 @@ impl<'a> Parser<'a> {
     //     // 这个函数是配合amend使用的，不能单独使用
     //     // 由amend去保证获得的是冒号后的字符切片
     //     let s = &self.src_str[idx..];
-        
+
     // }
 
     // fn amend(&mut self) -> String {
