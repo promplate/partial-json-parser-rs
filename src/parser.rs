@@ -1,45 +1,79 @@
 use crate::utils::{add_title, RunState};
 
 #[derive(Default, Debug)]
-enum State {
+pub enum State {
     InStr(EscapeCnt),
     #[default]
     NotInStr,
 }
 
 #[derive(Default, Debug)]
-struct EscapeCnt {
+pub struct EscapeCnt {
     // 这是一个取值范围为[0, 2)的计数器
     cnt: usize,
+    // 这是统计\u的
+    u_mode: bool,
+    u_cnt: usize,
 }
 
 impl EscapeCnt {
-    fn new() -> EscapeCnt {
-        EscapeCnt { cnt: 0 }
+    pub fn new() -> EscapeCnt {
+        EscapeCnt { cnt: 0, u_mode: false, u_cnt: 0 }
     }
 
     #[inline]
-    fn valid_esc_char(c: &char) -> bool {
-        matches!(c, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u')
+    fn valid_hex_char(c: &char) -> bool {
+        matches!(c, 
+            '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 
+            'a' | 'b' | 'c' | 'd' | 'e' | 'f' | 
+            'A' | 'B' | 'C' | 'D' | 'E' | 'F'
+        )
     }
 
-    fn input(&mut self, c: char) -> CharType {
+    #[inline]
+    fn valid_esc_char(&mut self, c: &char) -> bool {
+        if self.cnt == 0 {
+            return false;
+        }
+        // 实际上，在本文件中的proptest无法覆盖\u的情况
+        if !self.u_mode && *c != 'u' {
+            matches!(c, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't')
+        } else if !self.u_mode && *c == 'u' {
+            self.u_mode = true;
+            false
+        } else if self.u_mode && self.u_cnt < 3 && Self::valid_hex_char(c) {
+            self.u_cnt += 1;
+            false
+        } else if self.u_mode && self.u_cnt == 3 && Self::valid_hex_char(c) {
+            true
+        } else {
+            panic!("Should not reach here")
+        }
+    }
+
+    pub fn input(&mut self, c: char) -> CharType {
         if self.cnt == 0 && c == '\\' {
             self.cnt = 1;
             CharType::Escape
         } else if self.cnt == 0 && c == '"' {
             CharType::Quotation
-        } else if self.cnt == 1 && Self::valid_esc_char(&c) {
+        } else if self.cnt == 1 && self.valid_esc_char(&c) {
             self.cnt = 0;
+            self.u_cnt = 0;
+            self.u_mode = false;
             CharType::Normal
         } else {
-            CharType::Normal
+            CharType::Special
         }
+    }
+
+    pub fn cnt(&self) -> usize {
+        self.cnt
     }
 }
 
 #[derive(Default, PartialEq, Eq, Debug)]
-enum CharType {
+pub enum CharType {
     Colon,     // 冒号
     Comma,     // 逗号
     Quotation, // 引号，且不代表字符'"'
@@ -50,10 +84,11 @@ enum CharType {
     RCB,       // right curly bracket
     #[default]
     Normal,
+    Special,
 }
 
 impl CharType {
-    fn partial_pair(&self) -> Option<CharType> {
+    pub fn partial_pair(&self) -> Option<CharType> {
         match self {
             Self::Quotation => Some(Self::Quotation),
             Self::LFB => Some(Self::RFB),
@@ -62,7 +97,7 @@ impl CharType {
         }
     }
 
-    fn partial_pair_rev(&self) -> Option<CharType> {
+    pub fn partial_pair_rev(&self) -> Option<CharType> {
         match self {
             Self::Quotation => Some(Self::Quotation),
             Self::RFB => Some(Self::LFB),
@@ -71,15 +106,15 @@ impl CharType {
         }
     }
 
-    fn is_left_available(&self) -> bool {
+    pub fn is_left_available(&self) -> bool {
         matches!(self, Self::LFB | Self::LCB)
     }
 
-    fn is_right_available(&self) -> bool {
+    pub fn is_right_available(&self) -> bool {
         matches!(self, Self::RFB | Self::RCB)
     }
 
-    fn type_string(&self) -> String {
+    pub fn type_string(&self) -> String {
         let res = match self {
             Self::Colon => ":",
             Self::Comma => ",",
@@ -89,12 +124,12 @@ impl CharType {
             Self::RFB => "]",
             Self::LCB => "{",
             Self::RCB => "}",
-            Self::Normal => "",
+            Self::Normal | Self::Special => "",
         };
         res.to_string()
     }
 
-    fn option_type_string(char_type: Option<CharType>) -> String {
+    pub fn option_type_string(char_type: Option<CharType>) -> String {
         if let Some(t) = char_type {
             Self::type_string(&t)
         } else {
@@ -102,7 +137,7 @@ impl CharType {
         }
     }
 
-    fn simple_from_char(c: char) -> Self {
+    pub fn simple_from_char(c: char) -> Self {
         match c {
             ':' => Self::Colon,
             ',' => Self::Comma,
@@ -136,6 +171,7 @@ struct Parser<'a> {
     src_str: &'a str,
     last_sep: Option<usize>,
     last_colon: Option<usize>,
+    last_rbracket: Option<usize>,
     is_parsed: RunState,
     settings: ParseSettings,
 }
@@ -210,12 +246,16 @@ impl<'a> Parser<'a> {
                 self.last_sep = Some(idx);
             } else if char_type == CharType::Colon {
                 self.last_colon = Some(idx);
+            } else if char_type == CharType::RCB || char_type == CharType::RFB {
+                self.last_rbracket = Some(idx)
             }
         }
     }
 
     // fn cut_and_amend(&self, idx: usize) -> String {
     //     // 这个函数是配合amend使用的，不能单独使用
+    //     // 由amend去保证获得的是冒号后的字符切片
+    //     let s = &self.src_str[idx..];
         
     // }
 
@@ -224,7 +264,7 @@ impl<'a> Parser<'a> {
     //     // 内部对parse后的结果进行修饰，以返回正确的结果
     //     let cut_string = if let Some(last_sep) = self.last_sep {
     //         let last_colon = self.last_colon.unwrap_or(last_sep);
-    //         if last_colon <= last_sep {
+    //         if last_colon <= last_sep || last_colon == self.src_str.len() - 1 {
     //             // 说明后面没有必要进行补全，直接删除即可
     //             self.src_str[..last_sep].to_string()
     //         } else {
