@@ -1,5 +1,3 @@
-use std::f32::consts::E;
-
 use nom::{
     bytes::complete::take_while, IResult
 };

@@ -13,6 +13,12 @@ pub struct VParserRes {
     amend_value: String,
 }
 
+impl VParserRes {
+    fn new(amend_value: impl ToString) -> VParserRes {
+        VParserRes { amend_value: amend_value.to_string() }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Default, Clone, Copy)]
 pub enum JsonType {
     #[default]
