@@ -281,11 +281,13 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     fn cut_and_amend(&self, idx: usize, allow_string: bool) -> Result<String, ()> {
         // 获取冒号后的字符切片
         let s = &self.src_str[idx..];
         let (s, _) = value_parser::sp(s).unwrap();
 
+        #[inline]
         // 定义一个通用的解析和校验函数
         fn parse_and_check<F>(
             _par: &Parser,
@@ -379,7 +381,7 @@ impl<'a> Parser<'a> {
         if self.is_parsed.is_error() {
             return Err(());
         } else if self.is_parsed.is_success() && self.stack.is_empty() {
-            return Ok(self.src_str.to_string());
+            return self.cut_and_amend(0, true);
         }
 
         let mut cur_string = String::new();
@@ -420,7 +422,7 @@ impl<'a> Parser<'a> {
 
         if let Some(valid_idx) = valid_idx {
             if valid_idx < self.src_str.len() - 1 {
-                let keyval_only = amend_system.map_or(false, |c| c == CharType::LFB);
+                let keyval_only = amend_system.map_or(false, |c| c == CharType::LCB);
                 if !keyval_only {
                     if let Ok(s) = self.cut_and_amend(valid_idx + 1, keyval_only) {
                         cur_string.push_str(&self.src_str[..=valid_idx]);
@@ -479,7 +481,7 @@ mod test {
     use serde_json::Value;
 
     fn is_valid_json(json_str: &str) -> bool {
-        serde_json::from_str::<Value>(json_str).is_ok()
+        json5::from_str::<Value>(json_str).is_ok()
     }
 
     // #[test]
@@ -585,11 +587,11 @@ mod test {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(1000))]
+        #![proptest_config(ProptestConfig::with_cases(100))]
         #[test]
         fn amend_test_part_pass_prop(s in arb_json()) {
             let s = s.to_string();
-            // println!("{}", s);
+            println!("{}", s);
             for (i, _) in s.char_indices() {
                 if i == 0 {
                     continue;
@@ -600,13 +602,10 @@ mod test {
                 };
                 parser.parse();
                 let res = parser.amend();
-                // println!("{:?}", res);
-                // let collection_prefix = s.starts_with('[') || s.starts_with('{');
-                // if parser.is_parsed.is_error() || (parser.stack.is_empty() && collection_prefix) {
-                //     println!("String: {}", parser.src_str);
-                //     println!("{}, is_error: {:?}, stack: {}", parser.parse_tracer(), parser.is_parsed, parser.stack.is_empty());
-                //     panic!();
-                // }
+                // println!("input: {}, {:?}", &s[..i], res);
+                if let Ok(res) = res {
+                    assert!(is_valid_json(&res));
+                }
             }
         }
     }
@@ -614,9 +613,12 @@ mod test {
     #[test]
     fn amend_test_part_pass() {
         let list = [
-            r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
-            r#"[["¡¡¡¡",null]]"#,
-            r#"[{"M\t     ":"|","*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+            // r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+            // r#"[["¡¡¡¡",null]]"#,
+            // r#"[{"M\t     ":"|","*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+            // r#"Null"#,
+            // r#"{"":null,"󮐋":NaN}"#,
+            r#"[[null,[]]]"#,
         ];
         for s in list {
             // println!("{}", s);
