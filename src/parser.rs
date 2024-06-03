@@ -323,11 +323,18 @@ impl<'a> Parser<'a> {
             if self.last_colon.is_some() {
                 return Err(());
             }
-            let s: String = self.stack.iter().map(|(_, s)| s.type_string()).collect();
-            self.src_str.to_string()
+            let mut s: String = self.stack.iter().map(|(_, s)| s.type_string()).collect();
+            let last_lbraket = self.stack.last().map(|(i, _)| *i).unwrap_or(0);
+            if last_lbraket < self.src_str.len() - 1 {
+                let res = self.cut_and_amend(last_lbraket + 1);
+                if let Ok(cmpl) = res {
+                    s.push_str(&cmpl);
+                }
+            }
+            s
         };
 
-        for (_, c) in &self.stack {
+        for (_, c) in self.stack.iter().rev() {
             let s = CharType::option_type_string(c.partial_pair());
             cut_string.push_str(&s);
         }
