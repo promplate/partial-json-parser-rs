@@ -31,7 +31,11 @@ pub fn parse_spec(i: &str) -> Result<VParserRes, ()> {
 }
 
 #[inline]
-pub fn shared(spec_vec: &[(&str, usize)], res: IResult<&str, &str>, i: &str) -> Result<VParserRes, ()> {
+pub fn shared(
+    spec_vec: &[(&str, usize)],
+    res: IResult<&str, &str>,
+    i: &str,
+) -> Result<VParserRes, ()> {
     let completion = spec_vec.iter().find_map(|(pattern, min_len)| {
         if utils::is_prefix_with_min_length(pattern, i, *min_len) {
             utils::complement_after(pattern, i)
@@ -54,50 +58,36 @@ pub fn shared(spec_vec: &[(&str, usize)], res: IResult<&str, &str>, i: &str) -> 
 }
 
 pub fn parse_bool(i: &str) -> Result<VParserRes, ()> {
-    let res: IResult<&str, &str> = alt((
-        tag("false"),
-        tag("true"),
-    ))(i);
-    let spec_vec = [
-        ("true", 1),
-        ("false", 1),
-    ];
+    let res: IResult<&str, &str> = alt((tag("false"), tag("true")))(i);
+    let spec_vec = [("true", 1), ("false", 1)];
 
     shared(&spec_vec, res, i)
 }
 
 pub fn parse_nan(i: &str) -> Result<VParserRes, ()> {
     let res: IResult<&str, &str> = tag("NaN")(i);
-    let spec_vec = [
-        ("NaN", 1),
-    ];
+    let spec_vec = [("NaN", 1)];
 
     shared(&spec_vec, res, i)
 }
 
 pub fn parse_null(i: &str) -> Result<VParserRes, ()> {
     let res: IResult<&str, &str> = tag("null")(i);
-    let spec_vec = [
-        ("null", 1),
-    ];
+    let spec_vec = [("null", 1)];
 
     shared(&spec_vec, res, i)
 }
 
 pub fn parse_infinity(i: &str) -> Result<VParserRes, ()> {
     let res: IResult<&str, &str> = tag("Infinity")(i);
-    let spec_vec = [
-        ("Infinity", 1),
-    ];
+    let spec_vec = [("Infinity", 1)];
 
     shared(&spec_vec, res, i)
 }
 
 pub fn parse_ninfinity(i: &str) -> Result<VParserRes, ()> {
     let res: IResult<&str, &str> = tag("-Infinity")(i);
-    let spec_vec = [
-        ("-Infinity", 2),
-    ];
+    let spec_vec = [("-Infinity", 2)];
 
     shared(&spec_vec, res, i)
 }
@@ -122,8 +112,8 @@ mod test_spec {
 
         for (s, min_len) in spec_vec {
             for (idx, _) in s.char_indices().skip(min_len - 1) {
-                println!("{}, {}", idx, &s[..(idx+1)]);
-                let res = parse_spec(&s[..(idx+1)]).unwrap().amend_value;
+                println!("{}, {}", idx, &s[..(idx + 1)]);
+                let res = parse_spec(&s[..(idx + 1)]).unwrap().amend_value;
                 // println!("{}", res);
                 assert_eq!(s, res);
             }
@@ -145,17 +135,17 @@ mod test_spec {
 
         for (vec_idx, (s, min_len)) in spec_vec.iter().enumerate() {
             for (idx, _) in s.char_indices().skip(min_len - 1) {
-                println!("{}, {}", idx, &s[..(idx+1)]);
+                println!("{}, {}", idx, &s[..(idx + 1)]);
                 let res = if vec_idx == 0 || vec_idx == 1 {
-                    parse_bool(&s[..(idx+1)]).unwrap().amend_value
+                    parse_bool(&s[..(idx + 1)]).unwrap().amend_value
                 } else if vec_idx == 2 {
-                    parse_nan(&s[..(idx+1)]).unwrap().amend_value
+                    parse_nan(&s[..(idx + 1)]).unwrap().amend_value
                 } else if vec_idx == 3 {
-                    parse_null(&s[..(idx+1)]).unwrap().amend_value
+                    parse_null(&s[..(idx + 1)]).unwrap().amend_value
                 } else if vec_idx == 4 {
-                    parse_infinity(&s[..(idx+1)]).unwrap().amend_value
+                    parse_infinity(&s[..(idx + 1)]).unwrap().amend_value
                 } else {
-                    parse_ninfinity(&s[..(idx+1)]).unwrap().amend_value
+                    parse_ninfinity(&s[..(idx + 1)]).unwrap().amend_value
                 };
                 // println!("{}", res);
                 assert_eq!(*s, res);

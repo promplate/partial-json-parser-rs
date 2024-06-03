@@ -1,4 +1,10 @@
-use crate::{utils::{add_title, RunState}, value_parser::{self, VParserRes}};
+use nom::Err;
+
+use crate::utils::get_byte_idx;
+use crate::{
+    utils::{add_title, RunState},
+    value_parser::{self, VParserRes},
+};
 
 #[derive(Default, Debug)]
 pub enum State {
@@ -95,7 +101,7 @@ impl EscapeCnt {
     }
 }
 
-#[derive(Default, PartialEq, Eq, Debug)]
+#[derive(Default, PartialEq, Eq, Debug, Clone, Copy)]
 pub enum CharType {
     Colon,     // 冒号
     Comma,     // 逗号
@@ -275,20 +281,97 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn cut_and_amend(&self, idx: usize) -> Result<String, ()> {
-        // 这个函数是配合amend使用的，不能单独使用
-        // 由amend去保证获得的是冒号后的字符切片
+    fn cut_and_amend(&self, idx: usize, allow_string: bool) -> Result<String, ()> {
+        // 获取冒号后的字符切片
         let s = &self.src_str[idx..];
         let (s, _) = value_parser::sp(s).unwrap();
-        if let Ok(parse_res) =  value_parser::parse_num(s) {
-            Ok(parse_res.amend_value().to_string())
-        } else if let Ok(parse_res) = value_parser::parse_spec(s) {
-            Ok(parse_res.amend_value().to_string())
-        } else if let Ok(parse_res) = value_parser::parse_string(s) {
-            Ok(parse_res.amend_value().to_string())
-        } else {
+
+        // 定义一个通用的解析和校验函数
+        fn parse_and_check<F>(
+            _par: &Parser,
+            _idx: usize,
+            s: &str,
+            parse_func: F,
+            allow_incomplete: bool,
+        ) -> Result<(bool, String), ()>
+        where
+            F: Fn(&str) -> Result<value_parser::VParserRes, ()>,
+        {
+            if let Ok(parse_res) = parse_func(s) {
+                if allow_incomplete || parse_res.is_complete() {
+                    return Ok((true, s.to_string()));
+                } else {
+                    return Ok((false, String::new()));
+                }
+            }
             Err(())
         }
+
+        // 尝试解析bool
+        parse_and_check(
+            self,
+            idx,
+            s,
+            value_parser::parse_bool,
+            self.settings.allow_bool,
+        )
+        // 如果解析bool失败，尝试解析字符串
+        .or_else(|_| {
+            parse_and_check(
+                self,
+                idx,
+                s,
+                value_parser::parse_string,
+                allow_string && self.settings.allow_string,
+            )
+        })
+        .or_else(|_| {
+            parse_and_check(
+                self,
+                idx,
+                s,
+                value_parser::parse_num,
+                self.settings.allow_number,
+            )
+        })
+        // 如果解析数字失败，尝试解析其它特殊字符
+        .or_else(|_| {
+            parse_and_check(
+                self,
+                idx,
+                s,
+                value_parser::parse_nan,
+                self.settings.allow_nan,
+            )
+        })
+        .or_else(|_| {
+            parse_and_check(
+                self,
+                idx,
+                s,
+                value_parser::parse_null,
+                self.settings.allow_null,
+            )
+        })
+        .or_else(|_| {
+            parse_and_check(
+                self,
+                idx,
+                s,
+                value_parser::parse_infinity,
+                self.settings.allow_infinity,
+            )
+        })
+        .or_else(|_| {
+            parse_and_check(
+                self,
+                idx,
+                s,
+                value_parser::parse_ninfinity,
+                self.settings.allow_ninfinity,
+            )
+        })
+        .and_then(|(res, s)| if res { Ok(s) } else { Err(()) })
     }
 
     fn amend(&mut self) -> Result<String, ()> {
@@ -299,48 +382,71 @@ impl<'a> Parser<'a> {
             return Ok(self.src_str.to_string());
         }
 
-        // 内部对parse后的结果进行修饰，以返回正确的结果
-        let mut cut_string = if let Some(last_sep) = self.last_sep {
-            let last_colon = self.last_colon.unwrap_or(last_sep);
-            let last_rbracket = self.last_rbracket.unwrap_or(last_sep);
-            if last_colon <= last_sep || last_colon == self.src_str.len() - 1 {
-                // 说明后面没有必要进行补全，直接删除即可
-                self.src_str[..last_sep].to_string()
-            } else if last_rbracket > last_sep {
-                // 说明此时已经有括号在key_val后了
-                // 此时无需进行补全
-                self.src_str[..=last_rbracket].to_string()
-            } else if let Ok(s) = self.cut_and_amend(last_colon + 1) {
-                self.src_str[..=last_colon].to_string() + " " + &s
+        let mut cur_string = String::new();
+        let valid_idx: Option<usize>;
+        let mut amend_system: Option<CharType> = None;
+        let recover_idx: usize; // 用于恢复的idx，仅当需要恢复时使用
+        let top_elem = self
+            .stack
+            .last()
+            .map(|(idx, item)| (get_byte_idx(self.src_str, *idx), item));
+
+        // 注意，这里存储的所有都是idx而不是字节序，需要手动转换
+        let last_colon_byte = self.last_colon.map(|i| get_byte_idx(self.src_str, i));
+        let last_sep_byte = self.last_sep.map(|i| get_byte_idx(self.src_str, i));
+        if let Some(last_colon) = last_colon_byte {
+            if let Some(last_sep) = last_sep_byte {
+                valid_idx = if last_colon > last_sep {
+                    Some(last_colon)
+                } else {
+                    assert!(last_colon != last_sep);
+                    amend_system = top_elem.map(|(_, c)| *c);
+                    Some(last_sep)
+                };
+                recover_idx = last_sep;
             } else {
-                return Err(());
+                valid_idx = Some(last_colon);
+                recover_idx = top_elem.map_or(1, |(i, _)| i + 1);
+            }
+        } else if let Some(last_sep) = last_sep_byte {
+            amend_system = top_elem.map(|(_, c)| *c);
+            valid_idx = Some(last_sep);
+            recover_idx = last_sep;
+        } else {
+            amend_system = top_elem.map(|(_, c)| *c);
+            valid_idx = top_elem.map_or(Some(0), |(i, _)| Some(i));
+            recover_idx = top_elem.map_or(1, |(i, _)| i + 1);
+        }
+
+        if let Some(valid_idx) = valid_idx {
+            if valid_idx < self.src_str.len() - 1 {
+                let keyval_only = amend_system.map_or(false, |c| c == CharType::LFB);
+                if !keyval_only {
+                    if let Ok(s) = self.cut_and_amend(valid_idx + 1, keyval_only) {
+                        cur_string.push_str(&self.src_str[..=valid_idx]);
+                        cur_string.push_str(&s);
+                    } else {
+                        // 此时cut_and_amend匹配失败，因此需要进行恢复
+                        cur_string.push_str(&self.src_str[..recover_idx]);
+                    }
+                } else {
+                    // 此时只匹配key_val，因此需要进行恢复
+                    cur_string.push_str(&self.src_str[..recover_idx]);
+                }
+            } else {
+                // 此时':'或者','正好在末尾，因此需要进行恢复
+                cur_string.push_str(&self.src_str[..recover_idx]);
             }
         } else {
-            // 应该考虑没有last_sep的情况
-            // 如果指令的传输过程中，第一个key_value前也是没有逗号的
-            // 如果要对这种情况进行恢复的话，需要从栈中进行恢复
-            // assert!(self.last_colon.is_none(), "None sep with None last colon");
-            if self.last_colon.is_some() {
-                return Err(());
-            }
-            let mut s: String = self.stack.iter().map(|(_, s)| s.type_string()).collect();
-            let last_lbraket = self.stack.last().map(|(i, _)| *i).unwrap_or(0);
-            if last_lbraket < self.src_str.len() - 1 {
-                let res = self.cut_and_amend(last_lbraket + 1);
-                if let Ok(cmpl) = res {
-                    s.push_str(&cmpl);
-                }
-            }
-            s
-        };
+            return Err(());
+        }
 
         for (_, c) in self.stack.iter().rev() {
             let s = CharType::option_type_string(c.partial_pair());
-            cut_string.push_str(&s);
+            cur_string.push_str(&s);
         }
 
-        Ok(cut_string)
-
+        Ok(cur_string)
     }
 
     fn state_machine_input(&mut self, c: char) -> CharType {
@@ -370,11 +476,17 @@ mod test {
 
     use super::*;
 
+    use serde_json::Value;
+
+    fn is_valid_json(json_str: &str) -> bool {
+        serde_json::from_str::<Value>(json_str).is_ok()
+    }
+
     // #[test]
     // fn temp() {
     //     let s = "Hello, 世界";
     //     let last_rbracket = 6; // 索引 6 是 ',' 后面的空格字符位置
-    
+
     //     for (idx, c) in s.char_indices() {
     //         println!("{}, {}", idx, c)
     //     }
@@ -473,10 +585,11 @@ mod test {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(1))]
+        #![proptest_config(ProptestConfig::with_cases(1000))]
         #[test]
         fn amend_test_part_pass_prop(s in arb_json()) {
             let s = s.to_string();
+            // println!("{}", s);
             for (i, _) in s.char_indices() {
                 if i == 0 {
                     continue;
@@ -487,13 +600,40 @@ mod test {
                 };
                 parser.parse();
                 let res = parser.amend();
-                println!("{:?}", res);
+                // println!("{:?}", res);
                 // let collection_prefix = s.starts_with('[') || s.starts_with('{');
                 // if parser.is_parsed.is_error() || (parser.stack.is_empty() && collection_prefix) {
                 //     println!("String: {}", parser.src_str);
                 //     println!("{}, is_error: {:?}, stack: {}", parser.parse_tracer(), parser.is_parsed, parser.stack.is_empty());
                 //     panic!();
                 // }
+            }
+        }
+    }
+
+    #[test]
+    fn amend_test_part_pass() {
+        let list = [
+            r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+            r#"[["¡¡¡¡",null]]"#,
+            r#"[{"M\t     ":"|","*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+        ];
+        for s in list {
+            // println!("{}", s);
+            for (i, _) in s.char_indices() {
+                if i == 0 {
+                    continue;
+                }
+                let mut parser = Parser {
+                    src_str: &s[..i],
+                    ..Default::default()
+                };
+                parser.parse();
+                let res = parser.amend();
+                println!("input: {}, {:?}", &s[..i], res);
+                if let Ok(res) = res {
+                    assert!(is_valid_json(&res));
+                }
             }
         }
     }

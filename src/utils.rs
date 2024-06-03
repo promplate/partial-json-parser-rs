@@ -127,3 +127,7 @@ pub fn remove_trailing_comma_and_whitespace(input: &mut String) {
     let chars_to_trim: &[_] = &[' ', ',', '\t', '\r', '\n'];
     *input = input.trim_end_matches(chars_to_trim).to_string();
 }
+
+pub fn get_byte_idx(s: &str, idx: usize) -> usize {
+    s.char_indices().nth(idx).unwrap().0
+}

@@ -72,9 +72,21 @@ mod test_num {
         quick_test_ok!("0.123}", parse_num, Ok(VParserRes::new("0.123", false)));
         quick_test_ok!("123e10  ]", parse_num, Ok(VParserRes::new("123e10", false)));
         quick_test_ok!("123E10,", parse_num, Ok(VParserRes::new("123E10", false)));
-        quick_test_ok!("123e+10  }", parse_num, Ok(VParserRes::new("123e+10", false)));
-        quick_test_ok!("123e-10 ,", parse_num, Ok(VParserRes::new("123e-10", false)));
-        quick_test_ok!("-123e-10,", parse_num, Ok(VParserRes::new("-123e-10", false)));
+        quick_test_ok!(
+            "123e+10  }",
+            parse_num,
+            Ok(VParserRes::new("123e+10", false))
+        );
+        quick_test_ok!(
+            "123e-10 ,",
+            parse_num,
+            Ok(VParserRes::new("123e-10", false))
+        );
+        quick_test_ok!(
+            "-123e-10,",
+            parse_num,
+            Ok(VParserRes::new("-123e-10", false))
+        );
         quick_test_ok!(
             "100000000000000000000000000,",
             parse_num,

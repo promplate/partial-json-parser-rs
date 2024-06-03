@@ -8,9 +8,8 @@ mod parse_spec;
 mod parse_string;
 
 pub use parse_num::parse_num;
-pub use parse_spec::parse_spec;
-pub use parse_string::{sp, parse_string};
-
+pub use parse_spec::{parse_bool, parse_infinity, parse_nan, parse_ninfinity, parse_null};
+pub use parse_string::{parse_string, sp};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct VParserRes {
@@ -34,4 +33,3 @@ impl VParserRes {
         self.is_complete
     }
 }
-

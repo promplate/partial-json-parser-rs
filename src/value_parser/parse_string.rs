@@ -58,7 +58,10 @@ pub fn parse_string(i: &str) -> Result<VParserRes, ()> {
         // 如果不需要补全，直接返回相应的字符串
         amend_value.push_str(&s[..=end_of_s])
     }
-    Ok(VParserRes { amend_value, is_complete: !need_cmpl })
+    Ok(VParserRes {
+        amend_value,
+        is_complete: !need_cmpl,
+    })
 }
 
 #[cfg(test)]
@@ -86,7 +89,13 @@ mod test {
 
     #[test]
     fn test_cases() {
-        let test_vec = vec![r#""hjkhjk"#, r#""\u00"#, r#""\u0000\b"#, r#""abc""#, r#""abc\"\"""#];
+        let test_vec = vec![
+            r#""hjkhjk"#,
+            r#""\u00"#,
+            r#""\u0000\b"#,
+            r#""abc""#,
+            r#""abc\"\"""#,
+        ];
         for i in test_vec {
             let s = parse_string(i).unwrap().amend_value;
             println!("{}", s);
