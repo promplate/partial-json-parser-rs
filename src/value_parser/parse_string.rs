@@ -24,6 +24,7 @@ pub fn parse_string(i: &str) -> Result<VParserRes, ()> {
 
     let mut first = true;
     let mut need_cmpl = true;
+    let mut end_of_s = 0;
     let mut esc_cnt = EscapeCnt::new();
     let mut amend_value = String::new();
     let mut last_esc = None;
@@ -38,6 +39,7 @@ pub fn parse_string(i: &str) -> Result<VParserRes, ()> {
         let char_type = esc_cnt.input(c);
         if char_type == CharType::Quotation {
             need_cmpl = false;
+            end_of_s = idx;
             break;
         } else if char_type == CharType::Escape {
             last_esc = Some(idx);
@@ -52,8 +54,11 @@ pub fn parse_string(i: &str) -> Result<VParserRes, ()> {
             amend_value.push_str(s);
         }
         amend_value.push('"')
+    } else {
+        // 如果不需要补全，直接返回相应的字符串
+        amend_value.push_str(&s[..=end_of_s])
     }
-    Ok(VParserRes { amend_value })
+    Ok(VParserRes { amend_value, is_complete: !need_cmpl })
 }
 
 #[cfg(test)]
@@ -81,13 +86,11 @@ mod test {
 
     #[test]
     fn test_cases() {
-        let test_vec = vec![r#""hjkhjk"#, r#""\u00"#, r#""\u0000\b"#];
+        let test_vec = vec![r#""hjkhjk"#, r#""\u00"#, r#""\u0000\b"#, r#""abc""#, r#""abc\"\"""#];
         for i in test_vec {
             let s = parse_string(i).unwrap().amend_value;
-            if !s.is_empty() {
-                println!("{}", s);
-                assert!(serde_json::from_str::<String>(&s).is_ok());
-            }
+            println!("{}", s);
+            assert!(serde_json::from_str::<String>(&s).is_ok());
         }
     }
 }

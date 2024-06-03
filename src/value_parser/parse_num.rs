@@ -28,22 +28,22 @@ fn parse_base_(input: &str) -> IResult<&str, &str> {
 pub fn parse_num(i: &str) -> Result<VParserRes, ()> {
     // 尝试解析基数部分
     let base_res = parse_base_(i);
-    if let Ok((remaining, matched   )) = base_res {
+    if let Ok((remaining, matched)) = base_res {
         let no_e = !remaining.starts_with('e')
             && !remaining.starts_with("e-")
             && !remaining.starts_with('E')
             && !remaining.starts_with("E-");
         if remaining.starts_with('.') {
-            return Ok(VParserRes::new(matched));
+            return Ok(VParserRes::new(matched, false));
         } else if no_e {
             // 仅有基数部分，且无剩余输入
-            return Ok(VParserRes::new(""));
+            return Ok(VParserRes::new(matched, false)); // 其实这里应该也算是incomplete的，因为这是数字
         }
 
         // 尝试解析指数部分
         let exponent_res = parse_e_(remaining);
-        if exponent_res.is_ok() {
-            return Ok(VParserRes::new(""));
+        if let Ok(exponent_res) = exponent_res {
+            return Ok(VParserRes::new(matched.to_string() + exponent_res.1, false));
         } else {
             // 存在未完全解析的指数部分
             return Err(());
@@ -63,22 +63,22 @@ mod test_num {
 
     #[test]
     fn test_num_valid() {
-        quick_test_ok!("0,", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("-0,", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("123,", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("-123 ,", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("12.34,", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("-12.34]", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("0.123}", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("123e10  ]", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("123E10,", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("123e+10  }", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("123e-10 ,", parse_num, Ok(VParserRes::new("")));
-        quick_test_ok!("-123e-10,", parse_num, Ok(VParserRes::new("")));
+        quick_test_ok!("0,", parse_num, Ok(VParserRes::new("0", false)));
+        quick_test_ok!("-0,", parse_num, Ok(VParserRes::new("-0", false)));
+        quick_test_ok!("123,", parse_num, Ok(VParserRes::new("123", false)));
+        quick_test_ok!("-123 ,", parse_num, Ok(VParserRes::new("-123", false)));
+        quick_test_ok!("12.34,", parse_num, Ok(VParserRes::new("12.34", false)));
+        quick_test_ok!("-12.34]", parse_num, Ok(VParserRes::new("-12.34", false)));
+        quick_test_ok!("0.123}", parse_num, Ok(VParserRes::new("0.123", false)));
+        quick_test_ok!("123e10  ]", parse_num, Ok(VParserRes::new("123e10", false)));
+        quick_test_ok!("123E10,", parse_num, Ok(VParserRes::new("123E10", false)));
+        quick_test_ok!("123e+10  }", parse_num, Ok(VParserRes::new("123e+10", false)));
+        quick_test_ok!("123e-10 ,", parse_num, Ok(VParserRes::new("123e-10", false)));
+        quick_test_ok!("-123e-10,", parse_num, Ok(VParserRes::new("-123e-10", false)));
         quick_test_ok!(
             "100000000000000000000000000,",
             parse_num,
-            Ok(VParserRes::new(""))
+            Ok(VParserRes::new("100000000000000000000000000", false))
         );
     }
 
@@ -87,8 +87,8 @@ mod test_num {
         assert!(parse_num("1e").is_err());
         assert!(parse_num("1e-").is_err());
         assert!(parse_num("-123E").is_err());
-        assert_eq!(parse_num("0."), Ok(VParserRes::new("0")));
-        assert_eq!(parse_num("12."), Ok(VParserRes::new("12")));
+        assert_eq!(parse_num("0."), Ok(VParserRes::new("0", false)));
+        assert_eq!(parse_num("12."), Ok(VParserRes::new("12", false)));
         assert!(parse_num("2E-").is_err());
     }
 
@@ -105,11 +105,13 @@ mod test_num {
         let integer = "[1-9][0-9]*|0";
         let decimal = format!("{}\\.{}", integer, "[0-9]+");
         let exponent = "[eE][+-]?[0-9]+";
-        let number = format!("({})|({})|({})({})?|({})({})?", integer, decimal, integer, exponent, decimal, exponent);
-    
+        let number = format!(
+            "({})|({})|({})({})?|({})({})?",
+            integer, decimal, integer, exponent, decimal, exponent
+        );
+
         prop::string::string_regex(&number).unwrap()
     }
-    
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10000))]

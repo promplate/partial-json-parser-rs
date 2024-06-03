@@ -212,9 +212,9 @@ mod test {
 
         assert!(json_null.to_string() == "null");
         assert!(json_bool.to_string() == "true");
-        assert!(json_number.to_string() == "42.0");
+        assert!(json_number.to_string() == "42");
         assert!(json_string.to_string() == r#""Hello, world!""#);
-        assert!(json_array.to_string() == "[1.0,false]");
+        assert!(json_array.to_string() == "[1,false]");
         // 这个由于map是无序的，所以确实测不了
         // assert!(json_map.to_string() == r#"{"key1":"value1","key2":10.0}"#);
     }

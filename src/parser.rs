@@ -1,4 +1,4 @@
-use crate::utils::{add_title, RunState};
+use crate::{utils::{add_title, RunState}, value_parser::{self, VParserRes}};
 
 #[derive(Default, Debug)]
 pub enum State {
@@ -275,31 +275,66 @@ impl<'a> Parser<'a> {
         }
     }
 
-    // fn cut_and_amend(&self, idx: usize) -> String {
-    //     // 这个函数是配合amend使用的，不能单独使用
-    //     // 由amend去保证获得的是冒号后的字符切片
-    //     let s = &self.src_str[idx..];
+    fn cut_and_amend(&self, idx: usize) -> Result<String, ()> {
+        // 这个函数是配合amend使用的，不能单独使用
+        // 由amend去保证获得的是冒号后的字符切片
+        let s = &self.src_str[idx..];
+        let (s, _) = value_parser::sp(s).unwrap();
+        if let Ok(parse_res) =  value_parser::parse_num(s) {
+            Ok(parse_res.amend_value().to_string())
+        } else if let Ok(parse_res) = value_parser::parse_spec(s) {
+            Ok(parse_res.amend_value().to_string())
+        } else if let Ok(parse_res) = value_parser::parse_string(s) {
+            Ok(parse_res.amend_value().to_string())
+        } else {
+            Err(())
+        }
+    }
 
-    // }
+    fn amend(&mut self) -> Result<String, ()> {
+        assert!(self.is_parsed.is_not_none());
+        if self.is_parsed.is_error() {
+            return Err(());
+        } else if self.is_parsed.is_success() && self.stack.is_empty() {
+            return Ok(self.src_str.to_string());
+        }
 
-    // fn amend(&mut self) -> String {
-    //     assert!(self.is_parsed.is_not_none());
-    //     // 内部对parse后的结果进行修饰，以返回正确的结果
-    //     let cut_string = if let Some(last_sep) = self.last_sep {
-    //         let last_colon = self.last_colon.unwrap_or(last_sep);
-    //         if last_colon <= last_sep || last_colon == self.src_str.len() - 1 {
-    //             // 说明后面没有必要进行补全，直接删除即可
-    //             self.src_str[..last_sep].to_string()
-    //         } else {
+        // 内部对parse后的结果进行修饰，以返回正确的结果
+        let mut cut_string = if let Some(last_sep) = self.last_sep {
+            let last_colon = self.last_colon.unwrap_or(last_sep);
+            let last_rbracket = self.last_rbracket.unwrap_or(last_sep);
+            if last_colon <= last_sep || last_colon == self.src_str.len() - 1 {
+                // 说明后面没有必要进行补全，直接删除即可
+                self.src_str[..last_sep].to_string()
+            } else if last_rbracket > last_sep {
+                // 说明此时已经有括号在key_val后了
+                // 此时无需进行补全
+                self.src_str[..=last_rbracket].to_string()
+            } else if let Ok(s) = self.cut_and_amend(last_colon + 1) {
+                self.src_str[..=last_colon].to_string() + " " + &s
+            } else {
+                return Err(());
+            }
+        } else {
+            // 应该考虑没有last_sep的情况
+            // 如果指令的传输过程中，第一个key_value前也是没有逗号的
+            // 如果要对这种情况进行恢复的话，需要从栈中进行恢复
+            // assert!(self.last_colon.is_none(), "None sep with None last colon");
+            if self.last_colon.is_some() {
+                return Err(());
+            }
+            let s: String = self.stack.iter().map(|(_, s)| s.type_string()).collect();
+            self.src_str.to_string()
+        };
 
-    //         }
-    //     } else {
-    //         // 应该考虑没有last_sep的情况
-    //         assert!(self.last_colon.is_none(), "None sep with None last colon");
-    //         self.src_str.to_string()
-    //     };
+        for (_, c) in &self.stack {
+            let s = CharType::option_type_string(c.partial_pair());
+            cut_string.push_str(&s);
+        }
 
-    // }
+        Ok(cut_string)
+
+    }
 
     fn state_machine_input(&mut self, c: char) -> CharType {
         // 先不考虑转义，字符串内部存在特殊符号的情况的情况
@@ -328,6 +363,20 @@ mod test {
 
     use super::*;
 
+    // #[test]
+    // fn temp() {
+    //     let s = "Hello, 世界";
+    //     let last_rbracket = 6; // 索引 6 是 ',' 后面的空格字符位置
+    
+    //     for (idx, c) in s.char_indices() {
+    //         println!("{}, {}", idx, c)
+    //     }
+
+    //     // 这将正常工作，因为 6 是有效的 UTF-8 字符边界
+    //     let slice = &s[..last_rbracket];
+    //     println!("{}", slice); // 输出 "Hello,"
+    // }
+
     fn parser_full_pass(s: &str) -> Result<(), String> {
         let mut parser = Parser {
             src_str: s,
@@ -350,7 +399,7 @@ mod test {
     }
 
     #[test]
-    fn test_full_pass() {
+    fn parser_test_full_pass() {
         let mut tester = Tester::generate_from_text("test_cases");
         tester.test_specific(parser_full_pass, Some("full[0-9]+"));
         tester.print_res();
@@ -360,7 +409,7 @@ mod test {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10000))]
         #[test]
-        fn test_full_pass_prop(s in arb_json()) {
+        fn parser_test_full_pass_prop(s in arb_json()) {
             let s = s.to_string();
             let mut parser = Parser {
                 src_str: &s,
@@ -375,25 +424,25 @@ mod test {
         }
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(3))]
-        #[test]
-        fn test_my(s in arb_json()) {
-            use std::io::Write;
-            let s = s.to_string();
-            let mut fs_ = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open("./test.json").unwrap();
+    // proptest! {
+    //     #![proptest_config(ProptestConfig::with_cases(3))]
+    //     #[test]
+    //     fn test_my(s in arb_json()) {
+    //         use std::io::Write;
+    //         let s = s.to_string();
+    //         let mut fs_ = std::fs::OpenOptions::new()
+    //         .append(true)
+    //         .create(true)
+    //         .open("./test.json").unwrap();
 
-            writeln!(fs_, "{}", s).unwrap();
-        }
-    }
+    //         writeln!(fs_, "{}", s).unwrap();
+    //     }
+    // }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10000))]
         #[test]
-        fn test_part_pass_prop(s in arb_json()) {
+        fn parser_test_part_pass_prop(s in arb_json()) {
             let s = s.to_string();
             for (i, _) in s.char_indices() {
                 if i == s.len() - 1 {
@@ -412,6 +461,32 @@ mod test {
                     println!("{}, is_error: {:?}, stack: {}", parser.parse_tracer(), parser.is_parsed, parser.stack.is_empty());
                     panic!();
                 }
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1))]
+        #[test]
+        fn amend_test_part_pass_prop(s in arb_json()) {
+            let s = s.to_string();
+            for (i, _) in s.char_indices() {
+                if i == 0 {
+                    continue;
+                }
+                let mut parser = Parser {
+                    src_str: &s[..i],
+                    ..Default::default()
+                };
+                parser.parse();
+                let res = parser.amend();
+                println!("{:?}", res);
+                // let collection_prefix = s.starts_with('[') || s.starts_with('{');
+                // if parser.is_parsed.is_error() || (parser.stack.is_empty() && collection_prefix) {
+                //     println!("String: {}", parser.src_str);
+                //     println!("{}, is_error: {:?}, stack: {}", parser.parse_tracer(), parser.is_parsed, parser.stack.is_empty());
+                //     panic!();
+                // }
             }
         }
     }

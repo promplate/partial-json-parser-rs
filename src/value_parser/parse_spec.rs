@@ -37,9 +37,9 @@ pub fn parse_spec(i: &str) -> Result<VParserRes, ()> {
     });
 
     if let Some(cmpl) = completion {
-        Ok(VParserRes::new(i.to_string() + cmpl))
+        Ok(VParserRes::new(i.to_string() + cmpl, false))
     } else if res.is_ok() && completion.is_none() {
-        Ok(VParserRes::new(""))
+        Ok(VParserRes::new(res.unwrap().1, true))
     } else {
         Err(())
     }
@@ -64,8 +64,8 @@ mod test_spec {
 
         for (s, min_len) in spec_vec {
             for (idx, _) in s.char_indices().skip(min_len - 1) {
-                let s_: String = s.chars().take(idx + 1).collect();
-                let res = parse_spec(&s_).unwrap().amend_value;
+                println!("{}, {}", idx, &s[..(idx+1)]);
+                let res = parse_spec(&s[..(idx+1)]).unwrap().amend_value;
                 // println!("{}", res);
                 assert_eq!(s, res);
             }
