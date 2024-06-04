@@ -3,10 +3,10 @@ use nom::{
     IResult,
 };
 
+mod parse_array;
 mod parse_num;
 mod parse_spec;
 mod parse_string;
-mod parse_array;
 
 pub use parse_num::parse_num;
 pub use parse_spec::{parse_bool, parse_infinity, parse_nan, parse_ninfinity, parse_null};

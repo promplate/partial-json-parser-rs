@@ -171,7 +171,9 @@ pub fn arb_json() -> impl Strategy<Value = Json> {
         Just(Json::Infinity),
         Just(Json::NInfinity),
         any::<bool>().prop_map(Json::Bool),
-        any::<f64>().prop_filter("Must not be an integer", |&x| x.fract() != 0.0).prop_map(Json::Number),
+        any::<f64>()
+            .prop_filter("Must not be an integer", |&x| x.fract() != 0.0)
+            .prop_map(Json::Number),
         ".*".prop_map(Json::String),
     ];
     leaf.prop_recursive(

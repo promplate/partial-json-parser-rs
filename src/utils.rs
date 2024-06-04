@@ -8,7 +8,7 @@ pub enum RunState<E: ToString> {
     Success,
 }
 
-impl <E: ToString> RunState<E> {
+impl<E: ToString> RunState<E> {
     pub fn is_not_none(&self) -> bool {
         matches!(self, Self::Success | Self::Error(_))
     }

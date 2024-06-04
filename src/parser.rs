@@ -1,4 +1,3 @@
-use nom::Err;
 
 use crate::{
     utils::{add_title, RunState},
@@ -206,10 +205,18 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     #[allow(unused)]
-    pub fn parser(in_str: &'a str) -> String {
+    pub fn parser(in_str: &'a str) -> Result<String, ()> {
         // 接收需要补全的字符串，返回补全后的字符串
         // 内部需要构造parser
-        todo!()
+        if in_str.is_empty() {
+            return Err(());
+        }
+        let mut parser = Parser {
+            src_str: in_str,
+            ..Default::default()
+        };
+        parser.parse();
+        parser.amend()
     }
 
     pub fn stack_tracer(&self) -> String {
@@ -391,11 +398,12 @@ impl<'a> Parser<'a> {
     #[inline]
     fn get_recover_idx(&self, colon_idx: Option<usize>) -> Result<usize, ()> {
         if let Some(colon_idx) = colon_idx {
-            self.stack.iter().rev().find(|(idx, _)| {
-                *idx < colon_idx
-            })
-            .map(|(idx, _)| *idx + 1)
-            .ok_or(())
+            self.stack
+                .iter()
+                .rev()
+                .find(|(idx, _)| *idx < colon_idx)
+                .map(|(idx, _)| *idx + 1)
+                .ok_or(())
         } else {
             Ok(self.stack.last().unwrap().0)
         }
@@ -405,10 +413,11 @@ impl<'a> Parser<'a> {
         // 最新的，当前','之前的括号决定了这个组是obj还是arr
         // 如果这个括号过时了呢？应该找最新的符号的
         if let Some(sep_idx) = sep_idx {
-            self.stack.iter().rev().find(|(idx, c)| {
-                *idx < sep_idx
-            })
-            .map(|(_, c)| *c == CharType::LCB)
+            self.stack
+                .iter()
+                .rev()
+                .find(|(idx, c)| *idx < sep_idx)
+                .map(|(_, c)| *c == CharType::LCB)
         } else {
             self.stack.last().map(|(_, c)| *c == CharType::LCB)
         }
@@ -421,8 +430,14 @@ impl<'a> Parser<'a> {
         } else if self.is_parsed.is_success() && self.stack.is_empty() {
             match self.cut_and_amend(0, true) {
                 Ok(res) => return Ok(res),
-                Err(true) => return Err(()),
-                Err(false) => return Ok(self.src_str.to_string()),
+                Err(_) => {
+                    if self.last_rbracket.is_some() {
+                        // 说明曾经存在括号
+                        return Ok(self.src_str.to_string());
+                    } else {
+                        return Err(());
+                    }
+                }
             }
         }
 
@@ -430,9 +445,7 @@ impl<'a> Parser<'a> {
         let valid_idx: Option<i128>;
         let mut amend_system: Option<bool> = None; // false对应[, true对应{
         let recover_idx: usize; // 用于恢复的idx，仅当需要恢复时使用
-        let top_elem = self
-            .stack
-            .last();
+        let top_elem = self.stack.last();
 
         let last_rbracket = self.last_rbracket;
 
@@ -476,7 +489,7 @@ impl<'a> Parser<'a> {
                 let keyval_only = amend_system.map_or(false, |c| c);
                 if !keyval_only {
                     if let Ok(s) = self.cut_and_amend((valid_idx + 1) as usize, keyval_only) {
-                        cur_string.push_str(&self.src_str[..(valid_idx+1) as usize]);
+                        cur_string.push_str(&self.src_str[..(valid_idx + 1) as usize]);
                         cur_string.push_str(&s);
                     } else {
                         // 此时cut_and_amend匹配失败，因此需要进行恢复
@@ -622,21 +635,6 @@ mod test {
         }
     }
 
-    // proptest! {
-    //     #![proptest_config(ProptestConfig::with_cases(3))]
-    //     #[test]
-    //     fn test_my(s in arb_json()) {
-    //         use std::io::Write;
-    //         let s = s.to_string();
-    //         let mut fs_ = std::fs::OpenOptions::new()
-    //         .append(true)
-    //         .create(true)
-    //         .open("./test.json").unwrap();
-
-    //         writeln!(fs_, "{}", s).unwrap();
-    //     }
-    // }
-
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(10000))]
         #[test]
@@ -663,47 +661,16 @@ mod test {
         }
     }
 
-    use pyo3::prelude::*;
-    use pyo3::types::PyModule;
-
-    /// 封装的函数，用于调用 Python 的 ensure_json 并返回补全后的 JSON 字符串
-    fn complete_json(partial_json: &str) -> PyResult<String> {
-        Python::with_gil(|py| {
-            // 导入 partial_json_parser 模块
-            let partial_json_parser = PyModule::import(py, "partial_json_parser")?;
-            
-            // 获取 ensure_json 函数
-            let ensure_json = partial_json_parser.getattr("ensure_json")?;
-            
-            // 调用 ensure_json 函数并提取结果
-            let result: String = ensure_json.call1((partial_json,))?.extract()?;
-            
-            Ok(result)
-        })
-    }
-    
-
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(100))]
+        #![proptest_config(ProptestConfig::with_cases(1000))]
         #[test]
-        fn amend_test_part_pass_prop(s in arb_json()) {
+        fn parser_test_pass_prop(s in arb_json()) {
             let s = s.to_string();
-            // 初始化 Python 解释器
-            // pyo3::prepare_freethreaded_python();
-            println!("{:?}", s);
-            // if !is_valid_json(&s) {
-            //     return Ok(());
-            // }
             for (i, _) in s.char_indices() {
                 if i == 0 {
                     continue;
                 }
-                let mut parser = Parser {
-                    src_str: &s[..i],
-                    ..Default::default()
-                };
-                parser.parse();
-                let res = parser.amend();
+                let res = Parser::parser(&s[..i]);
                 // println!("input: {}, {:?}", &s[..i], res);
                 if let Ok(res) = res {
                     let json_parsed = is_valid_json(&res);
@@ -712,28 +679,35 @@ mod test {
                     }
                 }
             }
+            let res = Parser::parser(&s);
+            if let Ok(res) = res {
+                let json_parsed = is_valid_json(&res);
+                if !json_parsed {
+                    panic!("failed_str: {:?}", &s);
+                }
+            }
         }
     }
 
     #[test]
     fn amend_test_part_pass() {
         let list = [
-            // r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
-            // r#"[["¡¡¡¡",null]]"#,
-            // r#"[{"M\t     ":"|","*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
-            // r#"null"#,
-            // r#"{"":null,"󮐋":NaN}"#,
-            // r#"[[null,[]]]"#,
-            // r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true,"":0}]"#,
-            // r#"[[null,[null]]]"#,
-            // r#"[null,{}]"#,
-            // r#"[{"":[]}]"#,
-            // r#"[null,{"":null}]"#,
-            // r#"[{"L󼸑":[-Infinity],"G𒇗\/:O=":false}]"#,
-            // r#"[null]"#,
-            // "{\"\":{\"\":{",
-            // r#"["a", [[12, []]"#,
-            // r#"["a", [[12, {"": { "": {}, "": {}"#,
+            r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+            r#"[["¡¡¡¡",null]]"#,
+            r#"[{"M\t     ":"|","*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+            r#"null"#,
+            r#"{"":null,"󮐋":NaN}"#,
+            r#"[[null,[]]]"#,
+            r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true,"":0}]"#,
+            r#"[[null,[null]]]"#,
+            r#"[null,{}]"#,
+            r#"[{"":[]}]"#,
+            r#"[null,{"":null}]"#,
+            r#"[{"L󼸑":[-Infinity],"G𒇗\/:O=":false}]"#,
+            r#"[null]"#,
+            "{\"\":{\"\":{",
+            r#"["a", [[12, []]"#,
+            r#"["a", [[12, {"": { "": {}, "": {}"#,
             r#"-Infinity"#,
         ];
         for s in list {
