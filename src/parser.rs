@@ -1,7 +1,6 @@
-
 use crate::{
     utils::{add_title, RunState},
-    value_parser::{self, VParserRes},
+    value_parser,
 };
 
 #[derive(Default, Debug)]
@@ -192,7 +191,7 @@ struct ParseSettings {
 }
 
 #[derive(Default, Debug)]
-struct Parser<'a> {
+pub struct Parser<'a> {
     stack: Vec<(usize, CharType)>,
     state: State,
     src_str: &'a str,
@@ -205,18 +204,18 @@ struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     #[allow(unused)]
-    pub fn parser(in_str: &'a str) -> Result<String, ()> {
+    pub fn parser(in_str: &'a str) -> Result<String, String> {
         // 接收需要补全的字符串，返回补全后的字符串
         // 内部需要构造parser
         if in_str.is_empty() {
-            return Err(());
+            return Err("Input str is Empty".to_string());
         }
         let mut parser = Parser {
             src_str: in_str,
             ..Default::default()
         };
         parser.parse();
-        parser.amend()
+        parser.amend().or(Err("Amend Error in parser".to_string()))
     }
 
     pub fn stack_tracer(&self) -> String {
@@ -504,24 +503,6 @@ impl<'a> Parser<'a> {
             } else {
                 cur_string.push_str(&self.src_str[..=last_rbracket as usize]);
             }
-            // if valid_idx < self.src_str.len() - 1 {
-            //     let keyval_only = amend_system.map_or(false, |c| c == CharType::LCB);
-            //     if !keyval_only {
-            //         if let Ok(s) = self.cut_and_amend(valid_idx + 1, keyval_only) {
-            //             cur_string.push_str(&self.src_str[..=valid_idx]);
-            //             cur_string.push_str(&s);
-            //         } else {
-            //             // 此时cut_and_amend匹配失败，因此需要进行恢复
-            //             cur_string.push_str(&self.src_str[..recover_idx]);
-            //         }
-            //     } else {
-            //         // 此时只匹配key_val，因此需要进行恢复
-            //         cur_string.push_str(&self.src_str[..recover_idx]);
-            //     }
-            // } else {
-            //     // 此时':'或者','正好在末尾，因此需要进行恢复
-            //     cur_string.push_str(&self.src_str[..recover_idx]);
-            // }
         } else {
             return Err(());
         }
@@ -558,7 +539,7 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::test_utils::{arb_json, Tester};
+    use crate::{test_utils::{arb_json, Tester}, utils};
     use proptest::prelude::*;
 
     use super::*;
@@ -688,6 +669,14 @@ mod test {
             }
         }
     }
+
+    // proptest! {
+    //     #![proptest_config(ProptestConfig::with_cases(20))]
+    //     #[test]
+    //     fn performance(s in arb_json()) {
+    //         utils::write_things("./test_cases", s);
+    //     }
+    // }
 
     #[test]
     fn amend_test_part_pass() {

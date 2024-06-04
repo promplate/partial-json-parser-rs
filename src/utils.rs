@@ -1,4 +1,6 @@
-use crate::value_parser;
+use std::{fs, path::Path};
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub enum RunState<E: ToString> {
@@ -100,34 +102,44 @@ macro_rules! with_sp {
     };
 }
 
-fn is_subslice(a: &str, b: &str) -> bool {
-    let a_start = a.as_ptr() as usize;
-    let a_end = a_start + a.len();
-    let b_start = b.as_ptr() as usize;
-    let b_end = b_start + b.len();
-
-    b_start >= a_start && b_end <= a_end
+#[derive(Serialize, Deserialize, Debug)]
+struct Settings {
+    group_name: String,
+    suffix: String,
+    max: usize,
 }
 
-pub fn exclude_substring(a: &str, b: &str) -> String {
-    if !is_subslice(a, b) {
-        panic!("b is not a sub slice of a");
+#[allow(unused)]
+pub fn write_things(path: &str, s: impl ToString) {
+    let files_path = Path::new(path);
+    let settings_path = files_path.join("settings");
+    let settings_file_path = settings_path.join("settings.json");
+    if !settings_path.exists() {
+        panic!("No settings dir");
     }
-    let b_start = b.as_ptr() as usize - a.as_ptr() as usize;
-    let b_end = b_start + b.len();
 
-    let mut result = String::new();
-    result.push_str(&a[..b_start]); // 添加b之前的部分
-    result.push_str(&a[b_end..]); // 添加b之后的部分
-    result
+    if !settings_file_path.exists() {
+        panic!("No settings json");
+    }
+
+    // 读取 settings.json 文件
+    let data = fs::read_to_string(&settings_file_path).unwrap();
+    let settings: Settings = serde_json::from_str(&data).unwrap();
+
+    for i in 0..=settings.max {
+        let file_path =
+            files_path.join(&(settings.group_name.to_owned() + &i.to_string() + &settings.suffix));
+        if !file_path.exists() {
+            fs::write(file_path, s.to_string()).unwrap();
+            break;
+        }
+    }
 }
 
-pub fn remove_trailing_comma_and_whitespace(input: &mut String) {
-    // 使用闭包来定义匹配模式
-    let chars_to_trim: &[_] = &[' ', ',', '\t', '\r', '\n'];
-    *input = input.trim_end_matches(chars_to_trim).to_string();
-}
-
-pub fn get_byte_idx(s: &str, idx: usize) -> usize {
-    s.char_indices().nth(idx).unwrap().0
-}
+// mod test {
+//     #[test]
+//     fn test() {
+//         super::write_things("./test_cases", "123");
+//         super::write_things("./test_cases", "123");
+//     }
+// }
