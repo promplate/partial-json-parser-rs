@@ -39,7 +39,7 @@ fn benchmark_process_data_py(c: &mut Criterion) {
     }
 
     // 基准测试
-    c.bench_function("process_data", |b| {
+    c.bench_function("process_data_py", |b| {
         b.iter_batched_ref(
             || test_cases.clone(),
             |cases| {
@@ -52,5 +52,5 @@ fn benchmark_process_data_py(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, benchmark_process_data_py);
-criterion_main!(benches);
+criterion_group!(benches1, benchmark_process_data_py);
+criterion_main!(benches1);
