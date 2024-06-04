@@ -261,6 +261,8 @@ impl<'a> Parser<'a> {
             } else if char_type.is_right_available() {
                 // 检查栈顶元素并对尝试进行括号闭合
                 let top_item = self.stack.last().map(|(_, res)| res);
+                // 将右括号加入栈顶
+                self.last_rbracket = Some(idx);
                 if top_item == char_type.partial_pair_rev().as_ref() {
                     // 此时两个元素是匹配的，是正确的结果，此时应该出栈
                     self.stack.pop();
@@ -275,14 +277,22 @@ impl<'a> Parser<'a> {
                 self.last_sep = Some(idx);
             } else if char_type == CharType::Colon {
                 self.last_colon = Some(idx);
-            } else if char_type == CharType::RCB || char_type == CharType::RFB {
-                self.last_rbracket = Some(idx)
+            }
+        }
+    }
+
+    fn stack_recover(&mut self, idx: usize) {
+        while let Some((top_idx, _)) = self.stack.last() {
+            if *top_idx < idx {
+                break;
+            } else {
+                self.stack.pop();
             }
         }
     }
 
     #[inline]
-    fn cut_and_amend(&self, idx: usize, allow_string: bool) -> Result<String, ()> {
+    fn cut_and_amend(&mut self, idx: usize, allow_string: bool) -> Result<String, ()> {
         // 获取冒号后的字符切片
         let s = &self.src_str[idx..];
         let (s, _) = value_parser::sp(s).unwrap();
@@ -290,7 +300,7 @@ impl<'a> Parser<'a> {
         #[inline]
         // 定义一个通用的解析和校验函数
         fn parse_and_check<F>(
-            _par: &Parser,
+            _par: &mut Parser,
             _idx: usize,
             s: &str,
             parse_func: F,
@@ -376,6 +386,24 @@ impl<'a> Parser<'a> {
         .and_then(|(res, s)| if res { Ok(s) } else { Err(()) })
     }
 
+    #[inline]
+    fn get_recover_idx(&self, idx: Option<usize>) -> usize {
+        if let Some(idx) = idx {
+            idx
+        } else {
+            self.stack.last().unwrap().0 + 1
+        }
+    }
+
+    // fn get_is_amend(&self, colon_idx: Option<usize>) -> Option<bool> {
+    //     // 最新的，当前':'之前的
+    //     if let Some(colon_idx) = colon_idx {
+
+    //     } else {
+    //         self.stack.last().map(|(idx, c)| *c == CharType::LCB)
+    //     }
+    // }
+
     fn amend(&mut self) -> Result<String, ()> {
         assert!(self.is_parsed.is_not_none());
         if self.is_parsed.is_error() {
@@ -386,8 +414,8 @@ impl<'a> Parser<'a> {
 
         let mut cur_string = String::new();
         let valid_idx: Option<usize>;
-        let mut amend_system: Option<CharType> = None;
-        let recover_idx: usize; // 用于恢复的idx，仅当需要恢复时使用
+        let mut amend_system: Option<bool> = None; // false对应[, true对应{
+        let mut recover_idx: Option<usize> = None; // 用于恢复的idx，仅当需要恢复时使用
         let top_elem = self
             .stack
             .last()
@@ -396,49 +424,77 @@ impl<'a> Parser<'a> {
         // 注意，这里存储的所有都是idx而不是字节序，需要手动转换
         let last_colon_byte = self.last_colon.map(|i| get_byte_idx(self.src_str, i));
         let last_sep_byte = self.last_sep.map(|i| get_byte_idx(self.src_str, i));
+        let last_rbracket_byte = self.last_rbracket.map(|i| get_byte_idx(self.src_str, i));
         if let Some(last_colon) = last_colon_byte {
             if let Some(last_sep) = last_sep_byte {
                 valid_idx = if last_colon > last_sep {
                     Some(last_colon)
                 } else {
                     assert!(last_colon != last_sep);
-                    amend_system = top_elem.map(|(_, c)| *c);
+                    amend_system = top_elem.map(|(idx, c)| *c == CharType::LCB && idx < last_sep);
                     Some(last_sep)
                 };
-                recover_idx = last_sep;
+                recover_idx = Some(last_sep);
             } else {
                 valid_idx = Some(last_colon);
-                recover_idx = top_elem.map_or(1, |(i, _)| i + 1);
+                // 此时使用top_elem来recover有可能出错，如[{"":[
+                // recover_idx = top_elem.map_or(1, |(i, _)| i + 1);
+                recover_idx = None;
             }
         } else if let Some(last_sep) = last_sep_byte {
-            amend_system = top_elem.map(|(_, c)| *c);
+            amend_system = top_elem.map(|(idx, c)| *c == CharType::LCB && idx < last_sep);
             valid_idx = Some(last_sep);
-            recover_idx = last_sep;
+            recover_idx = Some(last_sep);
         } else {
-            amend_system = top_elem.map(|(_, c)| *c);
+            amend_system = top_elem.map(|(_, c)| *c == CharType::LCB);
             valid_idx = top_elem.map_or(Some(0), |(i, _)| Some(i));
-            recover_idx = top_elem.map_or(1, |(i, _)| i + 1);
+            // 这时候使用top_elem作为recovery应该不会出错
+            recover_idx = Some(top_elem.map_or(1, |(i, _)| i + 1));
         }
 
         if let Some(valid_idx) = valid_idx {
-            if valid_idx < self.src_str.len() - 1 {
-                let keyval_only = amend_system.map_or(false, |c| c == CharType::LCB);
+            let last_rbracket = last_rbracket_byte.map_or(valid_idx, |i| i);
+
+            if valid_idx == self.src_str.len() - 1 {
+                self.stack_recover(self.get_recover_idx(recover_idx));
+                cur_string.push_str(&self.src_str[..self.get_recover_idx(recover_idx)]);
+            } else if last_rbracket <= valid_idx {
+                let keyval_only = amend_system.map_or(false, |c| c);
                 if !keyval_only {
                     if let Ok(s) = self.cut_and_amend(valid_idx + 1, keyval_only) {
                         cur_string.push_str(&self.src_str[..=valid_idx]);
                         cur_string.push_str(&s);
                     } else {
                         // 此时cut_and_amend匹配失败，因此需要进行恢复
-                        cur_string.push_str(&self.src_str[..recover_idx]);
+                        self.stack_recover(self.get_recover_idx(recover_idx));
+                        cur_string.push_str(&self.src_str[..self.get_recover_idx(recover_idx)]);
                     }
                 } else {
                     // 此时只匹配key_val，因此需要进行恢复
-                    cur_string.push_str(&self.src_str[..recover_idx]);
+                    self.stack_recover(self.get_recover_idx(recover_idx));
+                    cur_string.push_str(&self.src_str[..self.get_recover_idx(recover_idx)]);
                 }
             } else {
-                // 此时':'或者','正好在末尾，因此需要进行恢复
-                cur_string.push_str(&self.src_str[..recover_idx]);
+                cur_string.push_str(&self.src_str[..=last_rbracket]);
             }
+            // if valid_idx < self.src_str.len() - 1 {
+            //     let keyval_only = amend_system.map_or(false, |c| c == CharType::LCB);
+            //     if !keyval_only {
+            //         if let Ok(s) = self.cut_and_amend(valid_idx + 1, keyval_only) {
+            //             cur_string.push_str(&self.src_str[..=valid_idx]);
+            //             cur_string.push_str(&s);
+            //         } else {
+            //             // 此时cut_and_amend匹配失败，因此需要进行恢复
+            //             cur_string.push_str(&self.src_str[..recover_idx]);
+            //         }
+            //     } else {
+            //         // 此时只匹配key_val，因此需要进行恢复
+            //         cur_string.push_str(&self.src_str[..recover_idx]);
+            //     }
+            // } else {
+            //     // 此时':'或者','正好在末尾，因此需要进行恢复
+            //     cur_string.push_str(&self.src_str[..recover_idx]);
+            // }
         } else {
             return Err(());
         }
@@ -481,7 +537,12 @@ mod test {
     use serde_json::Value;
 
     fn is_valid_json(json_str: &str) -> bool {
-        json5::from_str::<Value>(json_str).is_ok()
+        if let Err(err) = json5::from_str::<Value>(json_str) {
+            println!("Error: {:?}", err);
+            false
+        } else {
+            true
+        }
     }
 
     // #[test]
@@ -618,7 +679,13 @@ mod test {
             // r#"[{"M\t     ":"|","*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
             // r#"Null"#,
             // r#"{"":null,"󮐋":NaN}"#,
-            r#"[[null,[]]]"#,
+            // r#"[[null,[]]]"#,
+            // r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true,"":0}]"#,
+            // r#"[[null,[null]]]"#,
+            // r#"[null,{}]"#,
+            // r#"[{"":[]}]"#,
+            // r#"[null,{"":null}]"#,
+            r#"[{"L󼸑":[-Infinity],"G𒇗\/:O=":false}]"#,
         ];
         for s in list {
             // println!("{}", s);

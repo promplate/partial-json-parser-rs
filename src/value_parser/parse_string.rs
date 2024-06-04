@@ -58,10 +58,7 @@ pub fn parse_string(i: &str) -> Result<VParserRes, ()> {
         // 如果不需要补全，直接返回相应的字符串
         amend_value.push_str(&s[..=end_of_s])
     }
-    Ok(VParserRes {
-        amend_value,
-        is_complete: !need_cmpl,
-    })
+    Ok(VParserRes::new(amend_value, !need_cmpl))
 }
 
 #[cfg(test)]
