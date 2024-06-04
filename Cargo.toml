@@ -8,6 +8,7 @@ name = "partial_json_parser_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
+pyo3 = { version = "0.18", features = ["extension-module"] }
 proptest = "1.4.0"
 regex = "1.4.2"
 serde = { version = "1.0", features = ["derive"] }

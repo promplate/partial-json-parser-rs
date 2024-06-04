@@ -8,7 +8,7 @@ use std::fs;
 
 pub struct Tester {
     cases: Vec<(String, String)>,
-    results: Vec<RunState>,
+    results: Vec<RunState<String>>,
 }
 impl Tester {
     pub fn generate_from_text(path: &str) -> Tester {

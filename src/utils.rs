@@ -1,16 +1,16 @@
 use crate::value_parser;
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub enum RunState {
+pub enum RunState<E: ToString> {
     #[default]
     None,
-    Error(String),
+    Error(E),
     Success,
 }
 
-impl RunState {
+impl <E: ToString> RunState<E> {
     pub fn is_not_none(&self) -> bool {
-        *self != RunState::None
+        matches!(self, Self::Success | Self::Error(_))
     }
 
     pub fn is_none(&self) -> bool {
@@ -26,8 +26,8 @@ impl RunState {
     }
 }
 
-impl<T> From<Result<T, String>> for RunState {
-    fn from(value: Result<T, String>) -> Self {
+impl<T, E: ToString> From<Result<T, E>> for RunState<E> {
+    fn from(value: Result<T, E>) -> Self {
         match value {
             Ok(_) => RunState::Success,
             Err(s) => RunState::Error(s),
@@ -65,7 +65,7 @@ pub fn complement_after<'a>(full: &'a str, part: &'a str) -> Option<&'a str> {
 }
 
 pub fn is_prefix_with_min_length(str1: &str, str2: &str, min_length: usize) -> bool {
-    str1.starts_with(str2) && str2.len() >= min_length
+    str1.starts_with(str2) && str2.len() >= min_length && !str2.starts_with(str1)
 }
 
 #[macro_export]

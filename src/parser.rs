@@ -1,6 +1,5 @@
 use nom::Err;
 
-use crate::utils::get_byte_idx;
 use crate::{
     utils::{add_title, RunState},
     value_parser::{self, VParserRes},
@@ -201,7 +200,7 @@ struct Parser<'a> {
     last_sep: Option<usize>,
     last_colon: Option<usize>,
     last_rbracket: Option<usize>,
-    is_parsed: RunState,
+    is_parsed: RunState<String>,
     settings: ParseSettings,
 }
 
@@ -254,7 +253,7 @@ impl<'a> Parser<'a> {
         assert!(self.is_parsed.is_none());
         self.is_parsed = RunState::Success;
 
-        for (idx, c) in self.src_str.chars().enumerate() {
+        for (idx, c) in self.src_str.char_indices() {
             let char_type = self.state_machine_input(c);
             if char_type.is_left_available() {
                 self.stack.push((idx, char_type))
@@ -292,7 +291,9 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn cut_and_amend(&mut self, idx: usize, allow_string: bool) -> Result<String, ()> {
+    fn cut_and_amend(&mut self, idx: usize, allow_string: bool) -> Result<String, bool> {
+        // error的bool表示是否已经匹配成功，匹配成功但是不完整Err(true)，没有命中返回Err(false)
+
         // 获取冒号后的字符切片
         let s = &self.src_str[idx..];
         let (s, _) = value_parser::sp(s).unwrap();
@@ -383,99 +384,112 @@ impl<'a> Parser<'a> {
                 self.settings.allow_ninfinity,
             )
         })
-        .and_then(|(res, s)| if res { Ok(s) } else { Err(()) })
+        .or(Err(false))
+        .and_then(|(res, s)| if res { Ok(s) } else { Err(true) })
     }
 
     #[inline]
-    fn get_recover_idx(&self, idx: Option<usize>) -> usize {
-        if let Some(idx) = idx {
-            idx
+    fn get_recover_idx(&self, colon_idx: Option<usize>) -> Result<usize, ()> {
+        if let Some(colon_idx) = colon_idx {
+            self.stack.iter().rev().find(|(idx, _)| {
+                *idx < colon_idx
+            })
+            .map(|(idx, _)| *idx + 1)
+            .ok_or(())
         } else {
-            self.stack.last().unwrap().0 + 1
+            Ok(self.stack.last().unwrap().0)
         }
     }
 
-    // fn get_is_amend(&self, colon_idx: Option<usize>) -> Option<bool> {
-    //     // 最新的，当前':'之前的
-    //     if let Some(colon_idx) = colon_idx {
-
-    //     } else {
-    //         self.stack.last().map(|(idx, c)| *c == CharType::LCB)
-    //     }
-    // }
+    fn get_is_amend(&self, sep_idx: Option<usize>) -> Option<bool> {
+        // 最新的，当前','之前的括号决定了这个组是obj还是arr
+        // 如果这个括号过时了呢？应该找最新的符号的
+        if let Some(sep_idx) = sep_idx {
+            self.stack.iter().rev().find(|(idx, c)| {
+                *idx < sep_idx
+            })
+            .map(|(_, c)| *c == CharType::LCB)
+        } else {
+            self.stack.last().map(|(_, c)| *c == CharType::LCB)
+        }
+    }
 
     fn amend(&mut self) -> Result<String, ()> {
         assert!(self.is_parsed.is_not_none());
         if self.is_parsed.is_error() {
             return Err(());
         } else if self.is_parsed.is_success() && self.stack.is_empty() {
-            return self.cut_and_amend(0, true);
+            match self.cut_and_amend(0, true) {
+                Ok(res) => return Ok(res),
+                Err(true) => return Err(()),
+                Err(false) => return Ok(self.src_str.to_string()),
+            }
         }
 
         let mut cur_string = String::new();
-        let valid_idx: Option<usize>;
+        let valid_idx: Option<i128>;
         let mut amend_system: Option<bool> = None; // false对应[, true对应{
-        let mut recover_idx: Option<usize> = None; // 用于恢复的idx，仅当需要恢复时使用
+        let recover_idx: usize; // 用于恢复的idx，仅当需要恢复时使用
         let top_elem = self
             .stack
-            .last()
-            .map(|(idx, item)| (get_byte_idx(self.src_str, *idx), item));
+            .last();
 
-        // 注意，这里存储的所有都是idx而不是字节序，需要手动转换
-        let last_colon_byte = self.last_colon.map(|i| get_byte_idx(self.src_str, i));
-        let last_sep_byte = self.last_sep.map(|i| get_byte_idx(self.src_str, i));
-        let last_rbracket_byte = self.last_rbracket.map(|i| get_byte_idx(self.src_str, i));
-        if let Some(last_colon) = last_colon_byte {
-            if let Some(last_sep) = last_sep_byte {
+        let last_rbracket = self.last_rbracket;
+
+        // 注意，目前这里存储的所有都是字节序
+        if let Some(last_colon) = self.last_colon {
+            if let Some(last_sep) = self.last_sep {
                 valid_idx = if last_colon > last_sep {
-                    Some(last_colon)
+                    Some(last_colon as i128)
                 } else {
                     assert!(last_colon != last_sep);
-                    amend_system = top_elem.map(|(idx, c)| *c == CharType::LCB && idx < last_sep);
-                    Some(last_sep)
+                    amend_system = self.get_is_amend(Some(self.last_sep.unwrap()));
+                    Some(last_sep as i128)
                 };
-                recover_idx = Some(last_sep);
+                recover_idx = last_sep;
             } else {
-                valid_idx = Some(last_colon);
+                valid_idx = Some(last_colon as i128);
                 // 此时使用top_elem来recover有可能出错，如[{"":[
                 // recover_idx = top_elem.map_or(1, |(i, _)| i + 1);
-                recover_idx = None;
+                recover_idx = self.get_recover_idx(Some(last_colon))?
             }
-        } else if let Some(last_sep) = last_sep_byte {
-            amend_system = top_elem.map(|(idx, c)| *c == CharType::LCB && idx < last_sep);
-            valid_idx = Some(last_sep);
-            recover_idx = Some(last_sep);
+        } else if let Some(last_sep) = self.last_sep {
+            amend_system = self.get_is_amend(Some(last_sep));
+            valid_idx = Some(last_sep as i128);
+            recover_idx = last_sep;
         } else {
-            amend_system = top_elem.map(|(_, c)| *c == CharType::LCB);
-            valid_idx = top_elem.map_or(Some(0), |(i, _)| Some(i));
+            amend_system = self.get_is_amend(None);
+            // 如果是null的话，这个是对的么？
+            valid_idx = top_elem.map_or(Some(-1), |(i, _)| Some(*i as i128));
             // 这时候使用top_elem作为recovery应该不会出错
-            recover_idx = Some(top_elem.map_or(1, |(i, _)| i + 1));
+            recover_idx = top_elem.map_or(0, |(i, _)| *i);
         }
 
         if let Some(valid_idx) = valid_idx {
-            let last_rbracket = last_rbracket_byte.map_or(valid_idx, |i| i);
+            let last_rbracket = last_rbracket.map_or(valid_idx, |i| i as i128);
 
-            if valid_idx == self.src_str.len() - 1 {
-                self.stack_recover(self.get_recover_idx(recover_idx));
-                cur_string.push_str(&self.src_str[..self.get_recover_idx(recover_idx)]);
+            // 外部需要保证len不为0
+            if valid_idx == (self.src_str.len() - 1) as i128 {
+                self.stack_recover(recover_idx);
+                cur_string.push_str(&self.src_str[..recover_idx]);
             } else if last_rbracket <= valid_idx {
                 let keyval_only = amend_system.map_or(false, |c| c);
                 if !keyval_only {
-                    if let Ok(s) = self.cut_and_amend(valid_idx + 1, keyval_only) {
-                        cur_string.push_str(&self.src_str[..=valid_idx]);
+                    if let Ok(s) = self.cut_and_amend((valid_idx + 1) as usize, keyval_only) {
+                        cur_string.push_str(&self.src_str[..(valid_idx+1) as usize]);
                         cur_string.push_str(&s);
                     } else {
                         // 此时cut_and_amend匹配失败，因此需要进行恢复
-                        self.stack_recover(self.get_recover_idx(recover_idx));
-                        cur_string.push_str(&self.src_str[..self.get_recover_idx(recover_idx)]);
+                        self.stack_recover(recover_idx);
+                        cur_string.push_str(&self.src_str[..recover_idx]);
                     }
                 } else {
                     // 此时只匹配key_val，因此需要进行恢复
-                    self.stack_recover(self.get_recover_idx(recover_idx));
-                    cur_string.push_str(&self.src_str[..self.get_recover_idx(recover_idx)]);
+                    self.stack_recover(recover_idx);
+                    cur_string.push_str(&self.src_str[..recover_idx]);
                 }
             } else {
-                cur_string.push_str(&self.src_str[..=last_rbracket]);
+                cur_string.push_str(&self.src_str[..=last_rbracket as usize]);
             }
             // if valid_idx < self.src_str.len() - 1 {
             //     let keyval_only = amend_system.map_or(false, |c| c == CharType::LCB);
@@ -503,12 +517,14 @@ impl<'a> Parser<'a> {
             let s = CharType::option_type_string(c.partial_pair());
             cur_string.push_str(&s);
         }
-
-        Ok(cur_string)
+        if cur_string.is_empty() {
+            Err(())
+        } else {
+            Ok(cur_string)
+        }
     }
 
     fn state_machine_input(&mut self, c: char) -> CharType {
-        // 先不考虑转义，字符串内部存在特殊符号的情况的情况
         match self.state {
             State::NotInStr => {
                 if c == '"' {
@@ -647,12 +663,37 @@ mod test {
         }
     }
 
+    use pyo3::prelude::*;
+    use pyo3::types::PyModule;
+
+    /// 封装的函数，用于调用 Python 的 ensure_json 并返回补全后的 JSON 字符串
+    fn complete_json(partial_json: &str) -> PyResult<String> {
+        Python::with_gil(|py| {
+            // 导入 partial_json_parser 模块
+            let partial_json_parser = PyModule::import(py, "partial_json_parser")?;
+            
+            // 获取 ensure_json 函数
+            let ensure_json = partial_json_parser.getattr("ensure_json")?;
+            
+            // 调用 ensure_json 函数并提取结果
+            let result: String = ensure_json.call1((partial_json,))?.extract()?;
+            
+            Ok(result)
+        })
+    }
+    
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
         #[test]
         fn amend_test_part_pass_prop(s in arb_json()) {
             let s = s.to_string();
-            println!("{}", s);
+            // 初始化 Python 解释器
+            // pyo3::prepare_freethreaded_python();
+            println!("{:?}", s);
+            // if !is_valid_json(&s) {
+            //     return Ok(());
+            // }
             for (i, _) in s.char_indices() {
                 if i == 0 {
                     continue;
@@ -665,7 +706,10 @@ mod test {
                 let res = parser.amend();
                 // println!("input: {}, {:?}", &s[..i], res);
                 if let Ok(res) = res {
-                    assert!(is_valid_json(&res));
+                    let json_parsed = is_valid_json(&res);
+                    if !json_parsed {
+                        panic!("failed_str: {:?}", &s[..i]);
+                    }
                 }
             }
         }
@@ -677,7 +721,7 @@ mod test {
             // r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
             // r#"[["¡¡¡¡",null]]"#,
             // r#"[{"M\t     ":"|","*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
-            // r#"Null"#,
+            // r#"null"#,
             // r#"{"":null,"󮐋":NaN}"#,
             // r#"[[null,[]]]"#,
             // r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true,"":0}]"#,
@@ -685,7 +729,12 @@ mod test {
             // r#"[null,{}]"#,
             // r#"[{"":[]}]"#,
             // r#"[null,{"":null}]"#,
-            r#"[{"L󼸑":[-Infinity],"G𒇗\/:O=":false}]"#,
+            // r#"[{"L󼸑":[-Infinity],"G𒇗\/:O=":false}]"#,
+            // r#"[null]"#,
+            // "{\"\":{\"\":{",
+            // r#"["a", [[12, []]"#,
+            // r#"["a", [[12, {"": { "": {}, "": {}"#,
+            r#"-Infinity"#,
         ];
         for s in list {
             // println!("{}", s);
@@ -704,6 +753,45 @@ mod test {
                     assert!(is_valid_json(&res));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn amend_test_full_pass() {
+        let list = [
+            r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+            r#"[["¡¡¡¡",null]]"#,
+            r#"[{"M\t     ":"|","*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true}]"#,
+            r#"null"#,
+            r#"{"":null,"󮐋":NaN}"#,
+            r#"[[null,[]]]"#,
+            r#"[{"*\t<򀣺󼚨  $񺆨=.?'\/\/ 򎎨􂊖`":true,"":0}]"#,
+            r#"[[null,[null]]]"#,
+            r#"[null,{}]"#,
+            r#"[{"":[]}]"#,
+            r#"[null,{"":null}]"#,
+            r#"[{"L󼸑":[-Infinity],"G𒇗\/:O=":false}]"#,
+            r#"[null]"#,
+            r#""-Infinity""#,
+        ];
+        for s in list {
+            if !is_valid_json(s) {
+                continue;
+            }
+            println!("{}", s);
+            let mut parser = Parser {
+                src_str: s,
+                ..Default::default()
+            };
+            parser.parse();
+            let res = parser.amend();
+            println!("input: {}, {:?}", s, res);
+            if let Ok(res) = res {
+                assert!(is_valid_json(&res));
+            } else {
+                panic!("Should Ok")
+            }
+            assert!(is_valid_json(s));
         }
     }
 }
