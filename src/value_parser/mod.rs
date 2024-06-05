@@ -1,9 +1,3 @@
-use nom::{
-    error::{ParseError, VerboseError},
-    IResult,
-};
-
-mod parse_array;
 mod parse_num;
 mod parse_spec;
 mod parse_string;
@@ -24,10 +18,6 @@ impl VParserRes {
             amend_value: amend_value.to_string(),
             is_complete,
         }
-    }
-
-    pub fn amend_value(&self) -> &String {
-        &self.amend_value
     }
 
     pub fn is_complete(&self) -> bool {

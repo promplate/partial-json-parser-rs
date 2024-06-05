@@ -6,7 +6,6 @@ use crate::utils;
 
 use super::VParserRes;
 
-use super::parse_string::sp;
 
 #[allow(unused)]
 pub fn parse_spec(i: &str) -> Result<VParserRes, ()> {

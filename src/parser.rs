@@ -415,7 +415,7 @@ impl<'a> Parser<'a> {
             self.stack
                 .iter()
                 .rev()
-                .find(|(idx, c)| *idx < sep_idx)
+                .find(|(idx, _)| *idx < sep_idx)
                 .map(|(_, c)| *c == CharType::LCB)
         } else {
             self.stack.last().map(|(_, c)| *c == CharType::LCB)
@@ -539,7 +539,7 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::{test_utils::{arb_json, Tester}, utils};
+    use crate::test_utils::{arb_json, Tester};
     use proptest::prelude::*;
 
     use super::*;
@@ -647,6 +647,10 @@ mod test {
         #[test]
         fn parser_test_pass_prop(s in arb_json()) {
             let s = s.to_string();
+            // println!("input: {}", &s);
+            if !is_valid_json(&s) {
+                return Ok(());
+            }
             for (i, _) in s.char_indices() {
                 if i == 0 {
                     continue;

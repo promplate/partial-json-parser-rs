@@ -1,5 +1,7 @@
+use prop::strategy::ValueTree;
 use proptest::prelude::*;
 use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -80,8 +82,58 @@ pub fn arb_json() -> impl Strategy<Value = Json> {
     )
 }
 
+pub fn truncate_middle(input: &str) -> String {
+    // 计算字符长度
+    let len = input.chars().count();
+    if len < 2 {
+        return input.to_string();
+    }
+
+    // 计算保留前后各一半字符的索引
+    let half_len = len / 2;
+
+    // 找到前半部分的结束字节索引
+    let mut mid_byte_index = 0;
+    for (i, (byte_index, _)) in input.char_indices().enumerate() {
+        if i == half_len {
+            mid_byte_index = byte_index;
+            break;
+        }
+    }
+
+    // 构造新的字符串
+    input[..mid_byte_index].to_string()
+}
+
+fn is_valid_json(json_str: &str) -> bool {
+    !matches!(json5::from_str::<Value>(json_str), Err(_err))
+}
+
+pub fn gen_test_cases(num: usize) -> Vec<String> {
+    // 生成一些测试用例
+    let mut test_cases = vec![];
+    for _ in 0..num {
+        let mut case;
+        loop {
+            case = arb_json()
+                .new_tree(&mut proptest::test_runner::TestRunner::default())
+                .unwrap()
+                .current()
+                .to_string();
+            if is_valid_json(&case) {
+                break;
+            }
+        }
+        let case = truncate_middle(&case);
+        test_cases.push(case);
+    }
+
+    test_cases
+}
+
 #[cfg(test)]
 mod test {
+    #[allow(unused)]
     use super::*;
 
     #[test]

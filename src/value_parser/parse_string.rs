@@ -10,11 +10,6 @@ pub fn sp(i: &str) -> IResult<&str, &str> {
     take_while(is_space)(i)
 }
 
-fn is_string_character(c: char) -> bool {
-    //FIXME: should validate unicode character
-    println!("{}", c);
-    c != '"' && c != '\\'
-}
 
 pub fn parse_string(i: &str) -> Result<VParserRes, ()> {
     let (s, _) = sp(i).map_err(|_| ())?;
