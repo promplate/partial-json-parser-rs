@@ -36,6 +36,7 @@ impl Tester {
         Tester { cases, results }
     }
 
+    #[allow(unused)]
     pub fn print_tests(&self) {
         println!("################################ TEST CASES ################################");
         for (idx, text) in self.cases.iter().enumerate() {
@@ -78,6 +79,7 @@ impl Tester {
             .fold(true, |acc, (idx, _)| acc & !self.results[idx].is_error())
     }
 
+    #[allow(unused)]
     pub fn test<T>(&mut self, is_pass: T)
     where
         T: Fn(&str) -> Result<(), String>,
