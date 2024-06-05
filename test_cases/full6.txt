@@ -1,0 +1,16 @@
+{
+  "conference_name": "Tech Summit 2024",
+  "date": "2024-06-15",
+  "location": "San Francisco",
+  "attendees": 500,
+  "speakers": [
+    {
+      "name": "John Doe",
+      "topic": "Future of AI"
+    },
+    {
+      "name": "Jane Smith",
+      "topic": "Cybersecurity Trends"
+    }
+  ]
+}

@@ -1,12 +1,7 @@
-use pyo3::prelude::*;
+pub mod parser;
+#[cfg(test)]
+mod test_utils;
+mod utils;
+mod value_parser;
 
-#[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
-}
-
-#[pymodule]
-fn partial_json_parser_rs(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
-    Ok(())
-}
+pub use parser::Parser;
